@@ -3,7 +3,7 @@ export const siteConfig = {
   tagline: "Cari preset Alight Motion dari video TikTok",
   description:
     "Tempel link video TikTok, preset Alight Motion di deskripsi, bio, dan komentar dicarikan otomatis. Sekalian unduh video tanpa watermark, musik, dan foto beserta metadatanya.",
-  url: "https://preset-finder.vercel.app",
+  url: "https://alight-motion-preset-finder-gold.vercel.app/",
   lang: "id",
   locale: "id_ID",
   author: "Nimzz",
