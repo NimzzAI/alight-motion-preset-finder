@@ -39,7 +39,7 @@ export function VideoBox({ src, fallback = null, cover, link }: Props) {
         loop
         playsInline
         preload="metadata"
-        referrerPolicy="no-referrer"
+        {...({ referrerPolicy: "no-referrer" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
         onError={onError}
       />
     </div>

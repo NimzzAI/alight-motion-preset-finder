@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { ThemeToggle } from "./theme-toggle";
 
 export function Header() {
   return (
@@ -7,12 +8,15 @@ export function Header() {
         <span className="brand-mark" aria-hidden="true" />
         preset finder
       </Link>
-      <nav className="nav">
-        <Link to="/" activeOptions={{ exact: true }}>
-          Preset
-        </Link>
-        <Link to="/tiktok">TikTok</Link>
-      </nav>
+      <div className="header-right">
+        <nav className="nav">
+          <Link to="/" activeOptions={{ exact: true }}>
+            Preset
+          </Link>
+          <Link to="/tiktok">TikTok</Link>
+        </nav>
+        <ThemeToggle />
+      </div>
     </header>
   );
 }

@@ -29,7 +29,13 @@ export const Route = createRootRoute({
         href: "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap",
       },
     ],
-    scripts: [{ type: "application/ld+json", children: structuredData }],
+    scripts: [
+      { type: "application/ld+json", children: structuredData },
+      {
+        children:
+          "try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.setAttribute('data-theme','dark');}else if(t==='light'){document.documentElement.setAttribute('data-theme','light');}}catch(e){}",
+      },
+    ],
   }),
   shellComponent: Shell,
   component: Layout,
@@ -38,11 +44,11 @@ export const Route = createRootRoute({
 
 function Shell({ children }: { children: ReactNode }) {
   return (
-    <html lang={site.lang}>
+    <html lang={site.lang} suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body suppressHydrationWarning>
         {children}
         <Scripts />
       </body>
