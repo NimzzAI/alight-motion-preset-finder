@@ -10,10 +10,19 @@ export type Preset = {
   pinned: boolean;
 };
 
+export type Platform = "tiktok" | "youtube" | "instagram";
+
 export type FindResult = {
   engine: "finder" | "bintang" | "amfinder";
+  platform: Platform;
   video: {
     id: string | null;
+    title: string | null;
+    vertical: boolean;
+    kind: "video" | "image";
+    count: number;
+    duration: string | null;
+    createdAt: string | number | null;
     url: string | null;
     src: string | null;
     proxy: string | null;
@@ -27,6 +36,7 @@ export type FindResult = {
     username: string;
     nickname: string;
     avatar: string | null;
+    subs?: string | null;
   };
   scanned: { comments: number; replies: number };
   presets: Preset[];
@@ -61,6 +71,25 @@ export type TikTokMedia = {
     shares: number | null;
   };
   source: "go" | "tikwm" | "page";
+};
+
+export type AioMedia = {
+  quality: string;
+  label: string;
+  extension: string;
+  type: "video" | "audio";
+  direct: string;
+  proxy: string;
+};
+
+export type AioResult = {
+  videoId: string | null;
+  title: string;
+  author: string;
+  duration: string | null;
+  thumbnail: string | null;
+  viewCount: string | null;
+  medias: AioMedia[];
 };
 
 export type ApiResponse<T> = { ok: true; data: T } | { ok: false; error: string };

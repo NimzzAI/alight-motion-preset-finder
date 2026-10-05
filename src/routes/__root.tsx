@@ -11,7 +11,9 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: site.name },
-      { name: "theme-color", content: site.themeColor },
+      { name: "color-scheme", content: "light dark" },
+      { name: "theme-color", content: site.themeColor, media: "(prefers-color-scheme: light)" },
+      { name: "theme-color", content: site.themeColorDark, media: "(prefers-color-scheme: dark)" },
       { name: "application-name", content: site.name },
       { name: "apple-mobile-web-app-title", content: site.name },
     ],
@@ -29,7 +31,13 @@ export const Route = createRootRoute({
         href: "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap",
       },
     ],
-    scripts: [{ type: "application/ld+json", children: structuredData }],
+    scripts: [
+      { type: "application/ld+json", children: structuredData },
+      {
+        children:
+          "try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.setAttribute('data-theme','dark');}else if(t==='light'){document.documentElement.setAttribute('data-theme','light');}}catch(e){}",
+      },
+    ],
   }),
   shellComponent: Shell,
   component: Layout,
@@ -38,7 +46,7 @@ export const Route = createRootRoute({
 
 function Shell({ children }: { children: ReactNode }) {
   return (
-    <html lang={site.lang}>
+    <html lang={site.lang} suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>

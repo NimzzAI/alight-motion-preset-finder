@@ -23,6 +23,17 @@ export const settings = {
     },
   },
 
+  guard: {
+    enabled: env["GUARD_ENABLED"] !== "false",
+    botKey: env["BOT_KEY"] ?? "",
+  },
+
+  aio: {
+    maxPowIterations: 10_000_000,
+    attempts: 2,
+    timeoutMs: 45_000,
+  },
+
   limits: {
     requestsPerMinute: num(env["RATE_LIMIT_PER_MINUTE"], 20),
     mediaProxyTimeoutMs: 30_000,

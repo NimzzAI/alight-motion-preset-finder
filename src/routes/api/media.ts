@@ -8,8 +8,13 @@ const text = (body: string, status: number) => new Response(body, { status });
 const isPrivateHost = (h: string) =>
   h === "localhost" || /^[\d.]+$/.test(h) || h.includes(":") || /\.(local|internal|localhost)$/.test(h);
 
-const refererFor = (host: string, origin: string) =>
-  /tiktok|byte|ibyted/.test(host) ? "https://www.tiktok.com/" : host.endsWith("snaptik.fi") ? "https://snaptik.fi/" : origin + "/";
+const refererFor = (host: string, origin: string) => {
+  if (/tiktok|byte|ibyted/.test(host)) return "https://www.tiktok.com/";
+  if (host.endsWith("snaptik.fi")) return "https://snaptik.fi/";
+  if (/yt-dl\.click|cnv\.cx|y2meta/.test(host)) return "https://frame.y2meta-uk.com/";
+  if (/rapidcdn\.app|snapsave\.app/.test(host)) return "https://snapsave.app/";
+  return origin + "/";
+};
 
 export const Route = createFileRoute("/api/media")({
   server: {
@@ -37,7 +42,14 @@ export const Route = createFileRoute("/api/media")({
         if (range) headers["Range"] = range;
 
         try {
-          const upstream = await fetch(target, { headers, redirect: "follow", signal: AbortSignal.timeout(settings.limits.mediaProxyTimeoutMs) });
+          const open = (referer: string) =>
+            fetch(target, {
+              headers: { ...headers, Referer: referer },
+              redirect: "follow",
+              signal: AbortSignal.timeout(settings.limits.mediaProxyTimeoutMs),
+            });
+          let upstream = await open(headers["Referer"] as string);
+          if (upstream.status === 403) upstream = await open("https://j2download.com/");
           if (!upstream.ok && upstream.status !== 206) return text(`upstream ${upstream.status}`, 502);
 
           const type = upstream.headers.get("content-type") ?? "application/octet-stream";

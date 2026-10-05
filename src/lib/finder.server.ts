@@ -14,7 +14,7 @@ import { getVideoInfo, resolveTiktok } from "./tiktok-page.server";
 import { getVideoSrc, videoFields } from "./video-src.server";
 import type { FindResult, Preset } from "./types";
 
-type Found = {
+export type Found = {
   url: string;
   kind: string;
   detail: string | null;
@@ -287,23 +287,8 @@ const trust = (p: Item) =>
             ? 70
             : 20 + Math.min(p.digg, 50) / 5;
 
-async function scan(input: string): Promise<FindResult> {
-  const { videoId, user: urlUser } = await resolveTiktok(input);
-  const info = await getVideoInfo(videoId);
-  const user = info.user || urlUser;
-  const canon = user ? `https://www.tiktok.com/@${user}/video/${videoId}` : input;
-
-  const [profile, comments, videoSrc] = await Promise.all([
-    getProfile(user),
-    getComments(videoId, user),
-    getVideoSrc(canon, user, videoId, info.src ?? null),
-  ]);
-
-  const found: Found[] = [];
-  const seen = new Set<string>();
-  const hasAm = () => found.some((x) => isAm(x.url));
-
-  const add = (raw: string, kind: string, x: Partial<Found> = {}) => {
+export function makeAdder(found: Found[], seen: Set<string>) {
+  return (raw: string, kind: string, x: Partial<Found> = {}) => {
     const url = clean(raw);
     if (!url || seen.has(url) || (isNoise(url) && !isAm(url) && !isFile(url))) return;
     seen.add(url);
@@ -316,34 +301,11 @@ async function scan(input: string): Promise<FindResult> {
       digg: x.digg ?? 0,
     });
   };
+}
 
-  extractLinks(info.description).forEach((u) => add(u, "description"));
-  extractLinks(info.bio || profile.bio).forEach((u) => add(u, "bio"));
-  profile.links.forEach((u) => add(u, "bioLink"));
-  for (const c of comments) {
-    extractLinks(c.text).forEach((u) =>
-      add(u, "comment", { pinned: c.pinned, byAuthor: c.byAuthor, digg: c.digg, detail: "@" + c.user }),
-    );
-  }
-
-  let replyCount = 0;
-  if (!hasAm()) {
-    const parents = comments
-      .filter((c) => c.cid && c.replyCount > 0)
-      .sort((a, b) => Number(b.byAuthor) - Number(a.byAuthor) || Number(b.pinned) - Number(a.pinned) || b.digg - a.digg)
-      .slice(0, 12);
-
-    for (let i = 0; i < parents.length; i += 3) {
-      const batch = await mapLimit(parents.slice(i, i + 3), 3, (p) => getReplies(videoId, p.cid));
-      for (const c of batch.flat()) {
-        replyCount++;
-        extractLinks(c.text).forEach((u) =>
-          add(u, "comment", { byAuthor: !!user && c.user === user, digg: c.digg, detail: `@${c.user} (balasan)` }),
-        );
-      }
-      if (hasAm() || (found.some((x) => isFile(x.url)) && i >= 6)) break;
-    }
-  }
+export async function finishFound(found: Found[], seen: Set<string>): Promise<Preset[]> {
+  const add = makeAdder(found, seen);
+  const hasAm = () => found.some((x) => isAm(x.url));
 
   if (!hasAm()) {
     const trees = found.filter((x) => hostIn(x.url, TREE_HOSTS)).map((x) => x.url);
@@ -383,7 +345,7 @@ async function scan(input: string): Promise<FindResult> {
 
   items.sort((a, b) => trust(b) - trust(a) || (a.type === b.type ? 0 : a.type === "5mb" ? -1 : 1));
 
-  const presets: Preset[] = items.map((p) => ({
+  return items.map((p) => ({
     type: p.type,
     url: p.url,
     title: p.title ?? null,
@@ -394,11 +356,66 @@ async function scan(input: string): Promise<FindResult> {
     byAuthor: p.byAuthor,
     pinned: p.pinned,
   }));
+}
+
+async function scan(input: string): Promise<FindResult> {
+  const { videoId, user: urlUser } = await resolveTiktok(input);
+  const info = await getVideoInfo(videoId);
+  const user = info.user || urlUser;
+  const canon = user ? `https://www.tiktok.com/@${user}/video/${videoId}` : input;
+
+  const [profile, comments, videoSrc] = await Promise.all([
+    getProfile(user),
+    getComments(videoId, user),
+    getVideoSrc(canon, user, videoId, info.src ?? null),
+  ]);
+
+  const found: Found[] = [];
+  const seen = new Set<string>();
+  const hasAm = () => found.some((x) => isAm(x.url));
+  const add = makeAdder(found, seen);
+
+  extractLinks(info.description).forEach((u) => add(u, "description"));
+  extractLinks(info.bio || profile.bio).forEach((u) => add(u, "bio"));
+  profile.links.forEach((u) => add(u, "bioLink"));
+  for (const c of comments) {
+    extractLinks(c.text).forEach((u) =>
+      add(u, "comment", { pinned: c.pinned, byAuthor: c.byAuthor, digg: c.digg, detail: "@" + c.user }),
+    );
+  }
+
+  let replyCount = 0;
+  if (!hasAm()) {
+    const parents = comments
+      .filter((c) => c.cid && c.replyCount > 0)
+      .sort((a, b) => Number(b.byAuthor) - Number(a.byAuthor) || Number(b.pinned) - Number(a.pinned) || b.digg - a.digg)
+      .slice(0, 12);
+
+    for (let i = 0; i < parents.length; i += 3) {
+      const batch = await mapLimit(parents.slice(i, i + 3), 3, (p) => getReplies(videoId, p.cid));
+      for (const c of batch.flat()) {
+        replyCount++;
+        extractLinks(c.text).forEach((u) =>
+          add(u, "comment", { byAuthor: !!user && c.user === user, digg: c.digg, detail: `@${c.user} (balasan)` }),
+        );
+      }
+      if (hasAm() || (found.some((x) => isFile(x.url)) && i >= 6)) break;
+    }
+  }
+
+  const presets = await finishFound(found, seen);
 
   return {
     engine: "finder",
+    platform: "tiktok",
     video: {
       id: videoId,
+      title: null,
+      vertical: true,
+      kind: "video",
+      count: 0,
+      duration: null,
+      createdAt: null,
       url: `https://www.tiktok.com/@${user}/video/${videoId}`,
       ...videoFields(videoSrc),
       cover: info.cover ?? null,

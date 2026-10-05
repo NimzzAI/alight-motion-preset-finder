@@ -5,9 +5,11 @@ type Props = {
   fallback?: string | null;
   cover: string | null;
   link: string | null;
+  wide?: boolean;
+  site?: string;
 };
 
-export function VideoBox({ src, fallback = null, cover, link }: Props) {
+export function VideoBox({ src, fallback = null, cover, link, wide = false, site = "TikTok" }: Props) {
   const [url, setUrl] = useState(src ?? fallback);
   const [failed, setFailed] = useState(false);
 
@@ -18,11 +20,11 @@ export function VideoBox({ src, fallback = null, cover, link }: Props) {
 
   if (!url || failed) {
     return (
-      <div className="frame frame-empty" style={cover ? { backgroundImage: `url(${cover})` } : undefined}>
+      <div className={`frame frame-empty${wide ? " frame-wide" : ""}`} style={cover ? { backgroundImage: `url(${cover})` } : undefined}>
         <p>Video nggak bisa diputar di sini.</p>
         {link && (
           <a href={link} target="_blank" rel="noopener noreferrer">
-            Buka di TikTok
+            Buka di {site}
           </a>
         )}
       </div>
@@ -30,7 +32,7 @@ export function VideoBox({ src, fallback = null, cover, link }: Props) {
   }
 
   return (
-    <div className="frame">
+    <div className={`frame${wide ? " frame-wide" : ""}`}>
       <video
         key={url}
         src={url}
@@ -39,7 +41,7 @@ export function VideoBox({ src, fallback = null, cover, link }: Props) {
         loop
         playsInline
         preload="metadata"
-        referrerPolicy="no-referrer"
+        {...({ referrerPolicy: "no-referrer" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
         onError={onError}
       />
     </div>

@@ -41,8 +41,15 @@ export async function runBintang(input: string): Promise<FindResult> {
 
   return {
     engine: "bintang",
+    platform: "tiktok",
     video: {
       id,
+      title: null,
+      vertical: true,
+      kind: "video",
+      count: 0,
+      duration: null,
+      createdAt: null,
       url: tiktokUrl(username, id),
       ...videoFields(play ? { url: play, from: "bintang" } : null),
       cover: d.video?.thumbnail ?? null,
@@ -128,8 +135,15 @@ export async function runAmfinder(input: string): Promise<FindResult> {
 
   return {
     engine: "amfinder",
+    platform: "tiktok",
     video: {
       id,
+      title: null,
+      vertical: true,
+      kind: "video",
+      count: 0,
+      duration: null,
+      createdAt: null,
       url: tiktokUrl(username, id),
       ...videoFields(play ? { url: play, from: "amfinder" } : null),
       cover: r.video?.cover ?? null,

@@ -5,7 +5,7 @@
 <h1 align="center">Preset Finder</h1>
 
 <p align="center">
-  Cari preset Alight Motion dari video TikTok, sekalian unduh video tanpa watermark, musik, dan foto slideshow.
+  Cari preset Alight Motion dari video TikTok, YouTube, dan Instagram, sekalian unduh video tanpa watermark, musik, foto slideshow, dan downloader semua-dalam-satu (AIO).
 </p>
 
 <p align="center">
@@ -43,9 +43,9 @@
 
 ## Tentang
 
-Banyak kreator TikTok membagikan preset Alight Motion lewat deskripsi video, bio, link di bio, atau komentar. Mencarinya manual itu repot, apalagi kalau linknya disembunyikan di balik link shortener atau di balasan komentar.
+Banyak kreator membagikan preset Alight Motion lewat deskripsi video, bio, link di bio, atau komentar di TikTok, YouTube, dan Instagram. Mencarinya manual itu repot, apalagi kalau linknya disembunyikan di balik link shortener atau di balasan komentar.
 
-Preset Finder mengotomatiskan itu. Tempel link video TikTok, aplikasi memindai semua tempat yang mungkin berisi link preset, lalu menampilkan hasilnya berurutan dari yang paling tepercaya. Di halaman yang sama, video bisa diunduh tanpa watermark beserta metadatanya.
+Preset Finder mengotomatiskan itu. Tempel link video TikTok, YouTube, atau postingan Instagram. Aplikasi memindai semua tempat yang mungkin berisi link preset, lalu menampilkan hasilnya berurutan dari yang paling tepercaya. Video bisa diunduh dari halaman yang sama (untuk TikTok tanpa watermark, lengkap dengan metadatanya). Ada juga halaman downloader semua-dalam-satu (AIO) untuk link lain.
 
 Dibangun dengan TanStack Start dan React, tanpa library UI.
 
@@ -53,12 +53,25 @@ Dibangun dengan TanStack Start dan React, tanpa library UI.
 
 **Cari preset**
 
-- Memindai deskripsi video, bio akun, link di bio, komentar, dan balasan komentar.
+- Mendukung TikTok, YouTube (video dan Shorts), dan Instagram (post, reel, tv). Platform dikenali otomatis dari link.
+- Memindai deskripsi video, bio akun (TikTok), link di bio (TikTok), komentar, dan balasan komentar. Untuk Instagram, yang dipindai caption postingan.
 - Mengikuti redirect berantai (sampai 8 lompatan) untuk membuka link pendek menjadi link share Alight Motion asli.
 - Mengenali link layanan link-in-bio seperti lynk.id, linktr.ee, bio.link, heylink.me, dan sejenisnya, lalu menelusuri isinya.
 - Mengelompokkan hasil menjadi dua jenis: link Alight Motion (`5mb`) dan link file seperti Google Drive, MediaFire, Mega, GitHub (`xml`).
 - Menandai komentar yang di-pin dan komentar dari pemilik video, lalu mengurutkan hasil berdasarkan tingkat kepercayaan.
-- Tiga jalur pencarian bertingkat, jadi kalau satu gagal otomatis lanjut ke berikutnya.
+- Untuk TikTok ada tiga jalur pencarian bertingkat, jadi kalau satu gagal otomatis lanjut ke berikutnya. YouTube dan Instagram memakai satu jalur.
+
+**Cari preset dari YouTube dan Instagram**
+
+- YouTube: deskripsi, komentar, dan balasan komentar dipindai lewat endpoint internal YouTube. Video bisa diputar dan diunduh.
+- Instagram: caption postingan dipindai, video diambil lewat snapsave.
+- Hasil pakai alur yang sama dengan TikTok: link pendek diikuti, link-in-bio ditelusuri, lalu preset diurutkan.
+
+**Downloader AIO (`/aio`)**
+
+- Menerima link http(s), lalu mengambil daftar video dan audio beserta kualitasnya lewat layanan sumber (j2download).
+- Setiap tombol unduh lewat proxy bertanda tangan. Ada juga tombol salin link langsung.
+- Situs yang didukung mengikuti layanan sumber, bukan daftar tetap di aplikasi ini.
 
 **Unduh TikTok**
 
@@ -69,7 +82,9 @@ Dibangun dengan TanStack Start dan React, tanpa library UI.
 
 **Lain-lain**
 
-- Halaman `/` (cari preset) dan `/tiktok` (khusus unduh).
+- Halaman `/` (cari preset), `/tiktok` (khusus unduh TikTok), dan `/aio` (downloader semua-dalam-satu).
+- Pencarian preset mendukung link TikTok, YouTube (video dan Shorts), dan Instagram (post, reel, tv).
+- Guard anti-bot di endpoint API: blokir user agent scraper, wajib permintaan dari situs sendiri, dan bisa dilewati dengan header `x-am-key` (lihat `BOT_KEY`).
 - Link media diproxy dan ditandatangani, jadi tidak bisa disalahgunakan sebagai open proxy.
 - Rate limit per IP dan cache hasil di server.
 - SEO lengkap: meta tag, Open Graph, Twitter Card, canonical, JSON-LD, `robots.txt`, `sitemap.xml`, dan `manifest.webmanifest` yang dibuat otomatis dari satu file config.
@@ -79,9 +94,10 @@ Dibangun dengan TanStack Start dan React, tanpa library UI.
 Coba langsung di https://alight-motion-preset-finder-gold.vercel.app/
 
 1. Buka halaman utama.
-2. Tempel link video TikTok, atau cukup ID videonya (angka 15 digit ke atas).
+2. Tempel link video TikTok, YouTube, atau Instagram. Untuk TikTok, ID videonya saja (angka 15 digit ke atas) juga bisa.
 3. Tekan **Cari preset**.
-4. Hasil preset muncul, lalu tombol unduh dan metadata menyusul di bawahnya.
+4. Hasil preset muncul. Untuk TikTok, tombol unduh dan metadata menyusul di bawahnya. Untuk YouTube dan Instagram, tombol unduh ada di samping hasil.
+5. Untuk link dari situs lain, buka halaman `/aio`.
 
 ## Tech stack
 
@@ -92,11 +108,12 @@ Coba langsung di https://alight-motion-preset-finder-gold.vercel.app/
 | Server | Nitro (preset Vercel otomatis, bisa host Node apa pun) |
 | Build | Vite |
 | Bahasa | TypeScript (strict), ESM |
+| Parsing HTML | cheerio (modul YouTube dan Instagram) |
 | Service tambahan | Go 1.22 (opsional) |
 
 ## Cara kerja
 
-### Alur finder
+### Alur finder (TikTok)
 
 1. Link dinormalisasi (link pendek `vm.tiktok.com` dan sejenisnya di-resolve), lalu info video dan akun diambil.
 2. Mesin utama memindai deskripsi, bio, link di bio, komentar (sampai 4 halaman, 50 per halaman), dan balasan komentar.
@@ -105,6 +122,14 @@ Coba langsung di https://alight-motion-preset-finder-gold.vercel.app/
 5. Hasil diurutkan dan dikembalikan. Kalau mesin utama error atau tidak menemukan preset, lanjut ke jalur cadangan 1 (bintangapi), lalu jalur cadangan 2 (amfinder.web.id).
 6. Hasil pertama yang berisi preset dipakai. Kalau semua kosong, hasil kosong dari mesin utama yang ditampilkan.
 7. Hasil di-cache di memori server (default 20 menit, maksimal 200 entri).
+
+### Alur finder (YouTube dan Instagram)
+
+1. `src/lib/platform.ts` mengenali platform dari link, lalu `preset.server.ts` memilih mesinnya.
+2. YouTube: halaman watch dibaca untuk mengambil deskripsi, token komentar, dan konfigurasi API internal. Komentar (sampai 3 halaman) dan balasan dipindai. Metadata (judul, durasi, tayangan, suka) dilengkapi dari tubepilot. Link video diambil dari y2meta.
+3. Instagram: caption diambil lewat GraphQL, video lewat snapsave. Link share (`/share/...`) di-resolve dulu.
+4. Link yang ditemukan lewat tahap yang sama dengan TikTok (`finishFound`): link-in-bio ditelusuri, link pendek diikuti, preset diberi judul dan thumbnail, lalu diurutkan.
+5. Hasil di-cache sesuai `finder.cacheMinutes`. Link video diambil ulang tiap permintaan karena cepat kedaluwarsa.
 
 ### Alur unduh TikTok
 
@@ -116,13 +141,21 @@ Urutan sumber, berhenti di yang pertama berhasil:
 
 Hasil di-cache 5 menit (maksimal 200 entri). Semua URL media dibungkus lewat `/api/media` dengan tanda tangan HMAC.
 
+### Alur AIO
+
+1. Halaman `/aio` mengirim link ke `/api/aio`.
+2. Server membuka j2download, mengambil `__BOOTSTRAP__`, lalu menyelesaikan proof-of-work SHA-256 (maksimal 10 juta percobaan).
+3. Token akses diminta ke `/api/auth/issue`, lalu daftar link diambil dari `/api/autolink`.
+4. Daftar video dan audio dikembalikan lengkap dengan kualitas dan ekstensi. Tiap link dibungkus proxy bertanda tangan, link aslinya ikut dikirim untuk tombol salin.
+5. Kalau gagal, diulang sekali lagi. Hasil di-cache 5 menit.
+
 ## Mulai cepat
 
 Butuh Node.js 22 atau lebih baru.
 
 ```
 git clone https://github.com/NimzzAI/alight-motion-preset-finder.git
-cd preset-finder
+cd alight-motion-preset-finder
 npm install
 cp .env.example .env
 npm run dev
@@ -149,9 +182,9 @@ Identitas situs. Semua meta tag, sitemap, robots, dan manifest dibuat dari file 
 | `lang`, `locale` | Bahasa dan locale (`id`, `id_ID`) |
 | `author` | Nama pembuat |
 | `keywords` | Kata kunci SEO |
-| `themeColor` | Warna tema browser dan manifest |
+| `themeColor`, `themeColorDark` | Warna tema browser (mode terang dan gelap) dan manifest |
 | `images` | Path favicon, ikon, dan og-image beserta ukurannya |
-| `pages` | Path, judul, dan deskripsi per halaman |
+| `pages` | Path, judul, dan deskripsi per halaman (`finder`, `tiktok`, `aio`) |
 
 Catatan: `url` dipakai untuk membuat link absolut di `og:image`, canonical, dan sitemap. Kalau isinya tidak sama dengan domain yang aktif, preview link di WhatsApp, Telegram, dan media sosial tidak akan menampilkan gambar yang benar.
 
@@ -167,6 +200,11 @@ Pengaturan server.
 | `finder.cacheMax` | 200 | Jumlah maksimal cache finder |
 | `finder.commentPages` | 4 | Jumlah halaman komentar yang dipindai |
 | `finder.fallbacks` | bintangapi, amfinder | URL jalur cadangan |
+| `guard.enabled` | true | Nyalakan guard anti-bot di endpoint API |
+| `guard.botKey` | kosong | Kunci untuk melewati guard lewat header `x-am-key` |
+| `aio.maxPowIterations` | 10000000 | Batas percobaan proof-of-work |
+| `aio.attempts` | 2 | Jumlah percobaan ulang scraper AIO |
+| `aio.timeoutMs` | 45000 | Batas waktu permintaan terakhir ke layanan sumber |
 | `limits.requestsPerMinute` | 20 | Rate limit per IP |
 | `limits.mediaProxyTimeoutMs` | 30000 | Batas waktu proxy media |
 
@@ -178,12 +216,14 @@ Pengaturan server.
 | `GO_SERVICE_URL` | Tidak | Alamat service Go. Kosong berarti jalur Go dilewati |
 | `API_SECRET` | Tidak | Rahasia bersama dengan service Go, dikirim lewat header `x-api-secret` |
 | `RATE_LIMIT_PER_MINUTE` | Tidak | Batas request per IP per menit, default 20 |
+| `BOT_KEY` | Tidak | Kalau diisi, request dengan header `x-am-key` bernilai sama melewati guard anti-bot (untuk bot kamu) |
+| `GUARD_ENABLED` | Tidak | Isi `false` untuk mematikan guard saat testing pakai curl |
 
 Contoh `.env` ada di `.env.example`. Jangan pernah commit file `.env`.
 
 ## API
 
-Semua endpoint memakai metode `GET`. Respons JSON selalu berbentuk:
+Semua endpoint memakai metode `GET`. `/api/find`, `/api/tiktok`, dan `/api/aio` dilindungi guard: dari terminal pakai curl akan ditolak kecuali menyertakan `x-am-key` (kalau `BOT_KEY` diisi) atau `GUARD_ENABLED=false`. Respons JSON selalu berbentuk:
 
 ```json
 { "ok": true, "data": {} }
@@ -197,19 +237,22 @@ atau
 
 ### `GET /api/find?url=`
 
-Mencari preset dari sebuah video TikTok.
+Mencari preset dari video TikTok, YouTube, atau Instagram. Field `platform` di `data` berisi `tiktok`, `youtube`, atau `instagram`.
 
 ```
-curl "https://alight-motion-preset-finder-gold.vercel.app/api/find?url=https://www.tiktok.com/@user/video/1234567890123456789"
+curl -H "x-am-key: $BOT_KEY" "https://alight-motion-preset-finder-gold.vercel.app/api/find?url=https://www.tiktok.com/@user/video/1234567890123456789"
 ```
+
+Header `x-am-key` hanya perlu kalau memanggil dari luar situs (curl, bot) dan `BOT_KEY` diisi.
 
 Isi `data`:
 
 | Field | Keterangan |
 |---|---|
 | `engine` | Mesin yang menghasilkan: `finder`, `bintang`, atau `amfinder` |
-| `video` | `id`, `url`, `src`, `proxy`, `cover`, `description`, `views`, `likes`, `comments` |
-| `author` | `username`, `nickname`, `avatar` |
+| `platform` | `tiktok`, `youtube`, atau `instagram` |
+| `video` | `id`, `title`, `vertical`, `kind` (`video` atau `image`), `count`, `duration`, `createdAt`, `url`, `src`, `proxy`, `cover`, `description`, `views`, `likes`, `comments` |
+| `author` | `username`, `nickname`, `avatar`, dan `subs` (khusus YouTube, kalau tersedia) |
 | `scanned` | Jumlah komentar dan balasan yang dipindai |
 | `presets` | Daftar preset (lihat di bawah) |
 
@@ -243,6 +286,12 @@ Isi `data`:
 | `stats` | `views`, `likes`, `comments`, `shares` |
 | `source` | Sumber data: `go`, `tikwm`, atau `page` |
 
+### `GET /api/aio?url=`
+
+Mengambil daftar unduhan dari link apa saja yang didukung layanan sumber.
+
+Isi `data`: `videoId`, `title`, `author`, `duration`, `thumbnail`, `viewCount`, dan `medias` (`quality`, `label`, `extension`, `type`, `direct`, `proxy`).
+
 ### `GET /api/media?u=&s=`
 
 Proxy untuk video, audio, dan gambar. Link dibuat otomatis oleh server dan tidak dimaksudkan untuk dibuat manual.
@@ -260,8 +309,8 @@ Mendukung header `Range`, jadi video bisa di-seek dan diputar sebagian.
 | Kode | Arti |
 |---|---|
 | 200 | Berhasil |
-| 400 | Link kosong atau bukan link TikTok |
-| 403 | Tanda tangan salah, atau host tidak diizinkan (khusus `/api/media`) |
+| 400 | Link kosong atau bukan link yang didukung |
+| 403 | Ditolak guard anti-bot, atau (khusus `/api/media`) tanda tangan salah atau host tidak diizinkan |
 | 429 | Terlalu banyak permintaan |
 | 502 | Semua jalur gagal atau sumber upstream error |
 
@@ -298,7 +347,7 @@ node .output/server/index.mjs
 
 ## Service Go (opsional)
 
-Service kecil untuk mengambil data TikTok langsung dari sumbernya. Berguna kalau jalur lain sering gagal dari IP datacenter. Service ini tidak berjalan di Vercel, jadi harus dihost terpisah (VPS, Railway, Fly.io, dan sejenisnya).
+Service kecil untuk mengambil data TikTok langsung dari sumbernya. Kodenya berasal dari TikDown (`services/downloader-go`). Kalau folder itu belum ada di repo kamu, salin dari TikDown, atau lewati bagian ini karena aplikasi tetap jalan tanpa service Go. Berguna kalau jalur lain sering gagal dari IP datacenter. Service ini tidak berjalan di Vercel, jadi harus dihost terpisah (VPS, Railway, Fly.io, dan sejenisnya).
 
 Jalankan lokal:
 
@@ -332,7 +381,7 @@ Setelah service hidup, isi `GO_SERVICE_URL` (dan `API_SECRET` kalau dipakai) di 
 .
 ├── public/                       favicon, ikon, og-image
 ├── services/
-│   └── downloader-go/            service Go (opsional)
+│   └── downloader-go/            service Go (opsional, salin dari TikDown kalau belum ada)
 │       ├── cmd/server/main.go
 │       ├── internal/tiktok/
 │       └── Dockerfile
@@ -340,10 +389,12 @@ Setelah service hidup, isi `GO_SERVICE_URL` (dan `API_SECRET` kalau dipakai) di 
 │   ├── routes/
 │   │   ├── index.tsx             halaman preset finder
 │   │   ├── tiktok.tsx            halaman unduh TikTok
+│   │   ├── aio.tsx               halaman downloader AIO
 │   │   ├── __root.tsx            layout dan head global
 │   │   ├── api/
 │   │   │   ├── find.ts           GET /api/find
 │   │   │   ├── tiktok.ts         GET /api/tiktok
+│   │   │   ├── aio.ts            GET /api/aio
 │   │   │   └── media.ts          GET /api/media (proxy bertanda tangan)
 │   │   ├── robots[.]txt.ts
 │   │   ├── sitemap[.]xml.ts
@@ -356,7 +407,13 @@ Setelah service hidup, isi `GO_SERVICE_URL` (dan `API_SECRET` kalau dipakai) di 
 │   ├── lib/
 │   │   ├── finder.server.ts      mesin utama pencari preset
 │   │   ├── fallback.server.ts    jalur cadangan (bintangapi, amfinder)
-│   │   ├── preset.server.ts      urutan mesin: utama, cadangan 1, cadangan 2
+│   │   ├── preset.server.ts      pilih mesin per platform
+│   │   ├── find-social.server.ts finder YouTube dan Instagram
+│   │   ├── youtube.server.ts     scrape YouTube (komentar, meta, mp4)
+│   │   ├── instagram.server.ts   caption dan video Instagram
+│   │   ├── aio.server.ts         scraper j2download (AIO)
+│   │   ├── guard.server.ts       guard anti-bot API
+│   │   ├── platform.ts           deteksi platform dari link
 │   │   ├── links.server.ts       ekstraksi dan klasifikasi link
 │   │   ├── tiktok.server.ts      unduh TikTok: Go, tikwm, halaman
 │   │   ├── tiktok-page.server.ts parse halaman TikTok
@@ -382,9 +439,11 @@ File berakhiran `.server.ts` hanya dijalankan di server.
 
 - **Link media bertanda tangan.** Setiap URL di `/api/media` ditandatangani HMAC-SHA256 dengan `SIGN_SECRET`, dibandingkan dengan `timingSafeEqual`. Tanpa tanda tangan yang valid, permintaan ditolak 403.
 - **Anti open proxy.** Hanya HTTPS yang diizinkan. Host lokal, alamat IP langsung, dan domain `.local`, `.internal`, `.localhost` diblokir. Respons upstream yang bukan video, audio, atau gambar ditolak.
-- **Rate limit.** Setiap IP dibatasi per menit pada endpoint `/api/find` dan `/api/tiktok`.
+- **Rate limit.** Setiap IP dibatasi per menit pada endpoint `/api/find`, `/api/tiktok`, dan `/api/aio`.
+- **Guard anti-bot.** Endpoint API menolak user agent scraper (curl, python, wget, dan sejenisnya) dan permintaan yang bukan dari situs sendiri (dicek lewat `Sec-Fetch-Site`, `Origin`, atau `Referer`). Bot milik sendiri bisa lewat dengan header `x-am-key`. Guard ini penyaring ringan, bukan pengganti rate limit.
 - **Secret lewat env.** Jangan menaruh `SIGN_SECRET` atau `API_SECRET` di kode atau repo.
 - **Dependensi.** Selalu pakai versi TanStack Start yang sudah dipatch (lihat bagian deploy).
+- **Input divalidasi.** `/api/aio` hanya menerima URL http(s) publik, maksimal 512 karakter. Host lokal dan alamat IP langsung ditolak.
 
 ## Batasan
 
@@ -393,6 +452,9 @@ File berakhiran `.server.ts` hanya dijalankan di server.
 - **Bergantung pada layanan pihak ketiga.** Jalur cadangan dan sebagian sumber unduh memakai layanan eksternal yang bisa berubah atau mati sewaktu-waktu. TikTok juga bisa mengubah struktur halamannya.
 - **IP datacenter.** TikTok sering membatasi permintaan dari IP datacenter, sehingga jalur parse halaman bisa gagal. Service Go di server dengan IP berbeda biasanya membantu.
 - **Video privat atau dihapus** tidak bisa diambil.
+- **AIO bergantung pada satu layanan.** Daftar situs yang didukung dan kualitas yang tersedia ditentukan j2download. Kalau layanan itu mengubah proteksinya, `/aio` berhenti sampai scraper diperbarui.
+- **Instagram dan YouTube lebih rapuh.** Keduanya memakai endpoint internal dan layanan pihak ketiga. Akun privat tidak bisa dibaca, dan YouTube kadang menutup komentar atau memblokir IP datacenter.
+- **Guard bisa menghalangi pemakaian dari terminal.** Pakai `BOT_KEY` atau `GUARD_ENABLED=false` saat testing.
 
 ## Troubleshooting
 
@@ -402,6 +464,11 @@ File berakhiran `.server.ts` hanya dijalankan di server.
 | Preview link tidak menampilkan gambar | `url` di `site.ts` tidak sama dengan domain aktif |
 | `bad signature` di `/api/media` | `SIGN_SECRET` berubah setelah link dibuat, atau link dimodifikasi. Muat ulang hasil pencarian |
 | Pesan "Terlalu banyak permintaan" | Rate limit per IP tercapai, tunggu semenit |
+| `Akses ditolak.` (403) di `/api/*` | Guard menolak permintaan dari luar situs atau dari curl. Kirim header `x-am-key` (isi `BOT_KEY`), atau set `GUARD_ENABLED=false` saat testing lokal |
+| `/aio` gagal dengan pesan layanan sumber | j2download mengubah halamannya atau menolak link itu. Coba link lain, lalu cek `aio.server.ts` |
+| YouTube: video nggak bisa dibuka | Video dibatasi umur, diprivat, atau diblokir dari IP server |
+| Instagram: postingan nggak bisa diambil | Akun privat, atau snapsave sedang menolak. Coba lagi nanti |
+| Preview link menampilkan warna tema salah | Pastikan `themeColor` dan `themeColorDark` di `site.ts` sesuai |
 | Unduhan TikTok gagal, finder normal | Jalur unduh diblokir TikTok dari IP server. Pasang service Go di host lain |
 | Preset tidak ketemu padahal ada | Link disembunyikan di tempat yang tidak dipindai, atau komentar melewati batas halaman. Naikkan `finder.commentPages` |
 | Preset yang sama muncul dari cache lama | Cache finder berlaku 20 menit, tunggu atau redeploy |
@@ -425,6 +492,9 @@ File berakhiran `.server.ts` hanya dijalankan di server.
 ## Kredit
 
 - Dibuat oleh Nimzz.
+- Sistem multi-platform (YouTube, Instagram) dan guard anti-bot berasal dari AM Preset Finder (am-8).
+- Scraper AIO berasal dari skrip j2download (`aio.jsx`).
+- Modul YouTube, Instagram, dan alur pencarian multi-platform dipindahkan dari JavaScript ke TypeScript dengan struktur yang sama.
 - Logika finder berasal dari Alight Motion Finder.
 - Jalur cadangan berasal dari SC_AM_FINDER (bintangapi) dan skrip Zx (amfinder.web.id).
 - Service Go berasal dari TikDown.

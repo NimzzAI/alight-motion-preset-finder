@@ -1,6 +1,8 @@
 import { siteConfig as site } from "../config/site";
 
-export const absolute = (path: string) => new URL(path, site.url).href;
+const base = site.url.replace(/\/+$/, "");
+
+export const absolute = (path: string) => (path === "/" ? `${base}/` : `${base}${path.startsWith("/") ? path : "/" + path}`);
 
 type PageSeo = { title: string; description: string; path: string };
 
@@ -41,10 +43,11 @@ export const structuredData = JSON.stringify({
   "@context": "https://schema.org",
   "@type": "WebApplication",
   name: site.name,
-  url: site.url,
+  url: `${base}/`,
   description: site.description,
   inLanguage: site.lang,
   applicationCategory: "MultimediaApplication",
+  featureList: ["Cari preset Alight Motion", "Unduh video TikTok tanpa watermark", "Downloader semua-dalam-satu"],
   operatingSystem: "Any",
   image: absolute(site.images.og),
   author: { "@type": "Person", name: site.author },

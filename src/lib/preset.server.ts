@@ -1,10 +1,12 @@
 import { runAmfinder, runBintang } from "./fallback.server";
 import { runFinder } from "./finder.server";
+import { runSocial } from "./find-social.server";
+import { detectPlatform, ytId } from "./platform";
 import type { FindResult } from "./types";
 
 const engines = [runFinder, runBintang, runAmfinder];
 
-export async function findPreset(input: string): Promise<FindResult> {
+async function findTiktok(input: string): Promise<FindResult> {
   let empty: FindResult | null = null;
   let firstError: Error | null = null;
 
@@ -20,4 +22,11 @@ export async function findPreset(input: string): Promise<FindResult> {
 
   if (empty) return empty;
   throw firstError ?? new Error("Semua jalur gagal, coba lagi sebentar lagi.");
+}
+
+export async function findPreset(input: string): Promise<FindResult> {
+  const platform = detectPlatform(input);
+  if (platform === "youtube") return runSocial(input, "youtube", ytId(input));
+  if (platform === "instagram") return runSocial(input, "instagram", null);
+  return findTiktok(input);
 }

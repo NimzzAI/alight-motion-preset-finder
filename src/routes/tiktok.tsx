@@ -5,6 +5,7 @@ import { UrlForm } from "../components/url-form";
 import { siteConfig as site } from "../config/site";
 import { useLookup } from "../hooks/use-lookup";
 import { pageHead } from "../lib/seo";
+import { isTikTokInput } from "../lib/validate";
 import type { TikTokMedia } from "../lib/types";
 
 export const Route = createFileRoute("/tiktok")({
@@ -20,7 +21,13 @@ function TikTokDownloader() {
       <h1>Unduh video TikTok tanpa watermark.</h1>
       <p className="lead">Bisa video, musiknya saja, atau foto dari postingan slideshow. Tanpa login.</p>
 
-      <UrlForm onSubmit={run} loading={loading} button="Ambil media" />
+      <UrlForm
+        onSubmit={run}
+        loading={loading}
+        button="Ambil media"
+        validate={isTikTokInput}
+        invalid="Itu bukan link TikTok, coba cek lagi."
+      />
 
       {loading && <Status message="Mengambil media" elapsed={elapsed} />}
       {error && (
