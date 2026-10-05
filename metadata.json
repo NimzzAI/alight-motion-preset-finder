@@ -1,0 +1,8 @@
+{
+  "name": "Preset Finder",
+  "description": "Find Alight Motion presets from TikTok video descriptions, bios, and comments, and download watermark-free media.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
