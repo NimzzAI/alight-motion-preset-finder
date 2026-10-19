@@ -74,7 +74,7 @@ async function resolveChain(url: string): Promise<string | null> {
   return AM_SHARE_RE.test(amUrl) ? amUrl : isAm(cur) ? cur : amUrl;
 }
 
-async function getProfile(user: string) {
+export async function getProfile(user: string) {
   const empty = { bio: "", avatar: null as string | null, bioLink: null as string | null, links: [] as string[] };
   if (!user) return empty;
   try {
@@ -100,11 +100,11 @@ async function getProfile(user: string) {
   }
 }
 
-async function getComments(videoId: string, author: string): Promise<Comment[]> {
+export async function getComments(videoId: string, author: string, maxPages = settings.finder.commentPages): Promise<Comment[]> {
   const all: Comment[] = [];
   let cursor = 0;
 
-  for (let page = 0; page < settings.finder.commentPages; page++) {
+  for (let page = 0; page < maxPages; page++) {
     const q = new URLSearchParams({
       device_id: "7000000000000000001",
       aweme_id: videoId,
@@ -143,7 +143,7 @@ async function getComments(videoId: string, author: string): Promise<Comment[]> 
   return all.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.digg - a.digg);
 }
 
-async function getReplies(videoId: string, cid: string): Promise<Reply[]> {
+export async function getReplies(videoId: string, cid: string): Promise<Reply[]> {
   const q = new URLSearchParams({
     device_id: "7185643774736387594",
     iid: "7129847366169418245",

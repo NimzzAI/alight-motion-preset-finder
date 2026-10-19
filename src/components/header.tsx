@@ -6,16 +6,16 @@ export function Header() {
     <header className="wrap header">
       <Link to="/" className="brand">
         <span className="brand-mark" aria-hidden="true" />
-        preset finder
+        Preset Finder
       </Link>
+      <nav className="nav" aria-label="Navigasi utama">
+        <Link to="/" activeOptions={{ exact: true }}>
+          Preset
+        </Link>
+        <Link to="/tiktok">TikTok</Link>
+        <Link to="/aio">Downloader AIO</Link>
+      </nav>
       <div className="header-right">
-        <nav className="nav">
-          <Link to="/" activeOptions={{ exact: true }}>
-            Preset
-          </Link>
-          <Link to="/tiktok">TikTok</Link>
-          <Link to="/aio">AIO</Link>
-        </nav>
         <ThemeToggle />
       </div>
     </header>

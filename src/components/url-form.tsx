@@ -3,6 +3,7 @@ import { RecentSearches, useRecentSearches } from "./recent-searches";
 
 type Props = {
   onSubmit: (url: string) => void;
+  onKeywordSubmit?: (keyword: string) => void;
   loading: boolean;
   button: string;
   validate: (value: string) => boolean;
@@ -13,6 +14,7 @@ type Props = {
 
 export function UrlForm({
   onSubmit,
+  onKeywordSubmit,
   loading,
   button,
   validate,
@@ -26,21 +28,35 @@ export function UrlForm({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const url = value.trim();
-    if (!validate(url)) {
+    const raw = value.trim();
+    if (!raw) {
       setHint(invalid);
       return;
     }
-    setHint("");
-    addRecent(url);
-    onSubmit(url);
+    if (validate(raw)) {
+      setHint("");
+      addRecent(raw);
+      onSubmit(raw);
+      return;
+    }
+    if (onKeywordSubmit && raw.length >= 2 && !/^https?:\/\//i.test(raw)) {
+      setHint("");
+      addRecent(raw);
+      onKeywordSubmit(raw);
+      return;
+    }
+    setHint(invalid);
   };
 
-  const selectRecent = (url: string) => {
-    setValue(url);
+  const selectRecent = (item: string) => {
+    setValue(item);
     setHint("");
-    addRecent(url);
-    onSubmit(url);
+    addRecent(item);
+    if (validate(item)) {
+      onSubmit(item);
+    } else if (onKeywordSubmit) {
+      onKeywordSubmit(item);
+    }
   };
 
   const paste = async () => {
@@ -62,8 +78,8 @@ export function UrlForm({
           <input
             id="url"
             className="input"
-            type="url"
-            inputMode="url"
+            type="text"
+            inputMode="text"
             autoComplete="off"
             spellCheck={false}
             placeholder={placeholder}

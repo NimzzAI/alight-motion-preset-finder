@@ -8,9 +8,9 @@ export const settings = {
   signSecret: env["SIGN_SECRET"] ?? "ganti-lewat-env",
 
   downloader: {
-    goServiceUrl: (env["GO_SERVICE_URL"] ?? "").replace(/\/$/, ""),
+    goServiceUrl: (env["GO_SERVICE_URL"] || "http://127.0.0.1:8090").replace(/\/$/, ""),
     goServiceSecret: env["API_SECRET"] ?? "",
-    goTimeoutMs: 25_000,
+    goTimeoutMs: 55_000,
   },
 
   finder: {

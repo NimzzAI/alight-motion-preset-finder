@@ -42,6 +42,50 @@ export type FindResult = {
   presets: Preset[];
 };
 
+export type PresetOriginVideo = {
+  id: string;
+  url: string;
+  kind: "video" | "photo";
+  description: string;
+  cover: string | null;
+  src: string | null;
+  proxy: string | null;
+  images: string[];
+  duration: number | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  author: {
+    username: string;
+    nickname: string;
+    avatar: string | null;
+  };
+};
+
+export type DiscoveredPreset = Preset & {
+  id: string;
+  vt: PresetOriginVideo;
+};
+
+export type KeywordPresetVideoGroup = {
+  vt: PresetOriginVideo;
+  presets: Preset[];
+  scannedComments: number;
+};
+
+export type KeywordPresetSearchResult = {
+  query: string;
+  effectiveQueries: string[];
+  variation: number;
+  targetMin: number;
+  totalPresets: number;
+  totalVideosScanned: number;
+  totalCandidatesFound: number;
+  presets: DiscoveredPreset[];
+  videos: KeywordPresetVideoGroup[];
+  timestamp: number;
+};
+
 export type TikTokMedia = {
   id: string | null;
   type: "video" | "photo";

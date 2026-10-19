@@ -18,8 +18,8 @@ export const siteConfig = {
     "unduh tiktok tanpa watermark",
     "all in one downloader",
   ],
-  themeColor: "#f2eee4",
-  themeColorDark: "#14130f",
+  themeColor: "#f9f5eb",
+  themeColorDark: "#19202b",
   images: {
     favicon: "/favicon.png",
     favicon32: "/favicon-32.png",

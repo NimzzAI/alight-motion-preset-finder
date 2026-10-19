@@ -22,6 +22,7 @@ type Author struct {
 	Avatar     string `json:"avatar"`
 	Nickname   string `json:"nickname"`
 	Username   string `json:"username"`
+	Signature  string `json:"signature,omitempty"`
 	Followers  int64  `json:"followers"`
 	Following  int64  `json:"following"`
 	Like       int64  `json:"like"`
@@ -46,18 +47,19 @@ type Stats struct {
 }
 
 type Result struct {
-	ID         string   `json:"id"`
-	Cover      string   `json:"cover"`
-	CreateTime int64    `json:"createTime"`
-	Type     string   `json:"type"`
-	Title    string   `json:"title"`
-	Region   string   `json:"region"`
-	Duration string   `json:"duration"`
-	Video    string   `json:"video"`
-	Images   []string `json:"images"`
-	Author   Author   `json:"author"`
-	Music    Music    `json:"music"`
-	Stats    Stats    `json:"stats"`
+	ID           string   `json:"id"`
+	Cover        string   `json:"cover"`
+	CreateTime   int64    `json:"createTime"`
+	Type         string   `json:"type"`
+	Title        string   `json:"title"`
+	Region       string   `json:"region"`
+	Duration     string   `json:"duration"`
+	Video        string   `json:"video"`
+	Images       []string `json:"images"`
+	CanonicalURL string   `json:"canonicalUrl,omitempty"`
+	Author       Author   `json:"author"`
+	Music        Music    `json:"music"`
+	Stats        Stats    `json:"stats"`
 }
 
 func IsValidURL(raw string) bool {
@@ -69,7 +71,7 @@ func IsValidURL(raw string) bool {
 	return host == "tiktok.com" || strings.HasSuffix(host, ".tiktok.com")
 }
 
-var client = &http.Client{Timeout: 20 * time.Second}
+var client = &http.Client{Timeout: 25 * time.Second}
 
 func fetchHTML(ctx context.Context, target string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -98,6 +100,63 @@ func fetchHTML(ctx context.Context, target string) (string, error) {
 func Extract(ctx context.Context, target string) (*Result, error) {
 	if !IsValidURL(target) {
 		return nil, errors.New("invalid url")
+	}
+
+	engine, err := NewTikTokSearchEngine(25 * time.Second)
+	if err == nil {
+		if meta, enrichErr := engine.enrichItem(ctx, target); enrichErr == nil && meta != nil && meta.ID != "" {
+			vidURL := ""
+			var dur int64
+			if meta.Video != nil {
+				vidURL = firstNonEmpty(meta.Video.NoWatermarkURL, meta.Video.WatermarkURL)
+				dur = meta.Video.Duration
+			}
+			var followers, following, hearts, videos int64
+			if meta.Author.Stats != nil {
+				followers = meta.Author.Stats.FollowerCount
+				following = meta.Author.Stats.FollowingCount
+				hearts = meta.Author.Stats.HeartCount
+				videos = meta.Author.Stats.VideoCount
+			}
+			return &Result{
+				ID:           meta.ID,
+				Cover:        firstNonEmpty(meta.Cover, meta.DynamicCover),
+				CreateTime:   meta.CreatedAt,
+				Type:         meta.Type,
+				Title:        meta.Description,
+				Region:       meta.Region,
+				Duration:     fmt.Sprintf("%d detik", dur),
+				Video:        vidURL,
+				Images:       meta.Images,
+				CanonicalURL: meta.CanonicalURL,
+				Author: Author{
+					ID:         meta.Author.ID,
+					Avatar:     firstNonEmpty(meta.Author.Avatar, meta.Author.AvatarLarger),
+					Nickname:   meta.Author.Nickname,
+					Username:   meta.Author.UniqueID,
+					Signature:  meta.Author.Signature,
+					Verified:   meta.Author.Verified,
+					Followers:  followers,
+					Following:  following,
+					Like:       hearts,
+					VideoCount: videos,
+				},
+				Music: Music{
+					ID:        meta.Music.ID,
+					Title:     meta.Music.Title,
+					Author:    meta.Music.Author,
+					Thumbnail: meta.Music.Cover,
+					Duration:  fmt.Sprintf("%d detik", meta.Music.Duration),
+					URL:       meta.Music.PlayURL,
+				},
+				Stats: Stats{
+					Views:   meta.Stats.Plays,
+					Like:    meta.Stats.Likes,
+					Comment: meta.Stats.Comments,
+					Share:   meta.Stats.Shares,
+				},
+			}, nil
+		}
 	}
 
 	html, err := fetchHTML(ctx, target)
@@ -159,11 +218,11 @@ type itemStruct struct {
 	} `json:"imagePost"`
 
 	Video struct {
-		Duration      int64  `json:"duration"`
-		PlayAddr      string `json:"playAddr"`
-		DownloadAddr  string `json:"downloadAddr"`
-		Cover         string `json:"cover"`
-		OriginCover   string `json:"originCover"`
+		Duration     int64  `json:"duration"`
+		PlayAddr     string `json:"playAddr"`
+		DownloadAddr string `json:"downloadAddr"`
+		Cover        string `json:"cover"`
+		OriginCover  string `json:"originCover"`
 	} `json:"video"`
 
 	Music struct {
@@ -232,11 +291,11 @@ func (i itemStruct) toResult(ctx context.Context) *Result {
 		ID:         i.ID,
 		Cover:      firstNonEmpty(i.Video.Cover, i.Video.OriginCover),
 		CreateTime: i.CreateTime,
-		Type:     "video",
-		Title:    i.Desc,
-		Region:   i.Loc,
-		Duration: fmt.Sprintf("%d detik", i.Video.Duration),
-		Images:   []string{},
+		Type:       "video",
+		Title:      i.Desc,
+		Region:     i.Loc,
+		Duration:   fmt.Sprintf("%d detik", i.Video.Duration),
+		Images:     []string{},
 		Author: Author{
 			ID:         i.Author.ID,
 			Avatar:     i.Author.AvatarThumb,
