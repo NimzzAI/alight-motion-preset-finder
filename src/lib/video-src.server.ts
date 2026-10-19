@@ -124,7 +124,8 @@ export const tikwmUrl = (u: unknown): string | null => {
   return "https://www.tikwm.com" + (u.startsWith("/") ? "" : "/") + u;
 };
 
-async function fromTikwm(user: string, videoId: string): Promise<string | null> {
+export async function fromTikwm(user: string, videoId: string): Promise<string | null> {
+  if (!videoId) return null;
   try {
     const q = new URLSearchParams({ url: `https://www.tiktok.com/@${user || "tiktok"}/video/${videoId}`, hd: "1" });
     const res = await fetch("https://www.tikwm.com/api/?" + q, {
@@ -137,6 +138,9 @@ async function fromTikwm(user: string, videoId: string): Promise<string | null> 
     return null;
   }
 }
+
+export const isSignedWebappUrl = (u: string | null | undefined): boolean =>
+  Boolean(u && (/tk=tt_chain_token/i.test(u) || /webapp-prime/i.test(u)));
 
 async function fromPage(user: string, videoId: string): Promise<string | null> {
   if (!user) return null;
@@ -162,9 +166,9 @@ export async function getVideoSrc(
   embedSrc: string | null,
 ): Promise<VideoSrc | null> {
   let url: string | null;
+  if ((url = await fromTikwm(user, videoId))) return { url, from: "tikwm" };
   if ((url = await fromDownr(canonUrl))) return { url, from: "downr" };
   if ((url = await fromSnaptik(canonUrl))) return { url, from: "snaptik" };
-  if ((url = await fromTikwm(user, videoId))) return { url, from: "tikwm" };
   if (embedSrc) return { url: embedSrc, from: "embed" };
   if ((url = await fromPage(user, videoId))) return { url, from: "page" };
   return null;

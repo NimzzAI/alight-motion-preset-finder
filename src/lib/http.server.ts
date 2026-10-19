@@ -88,11 +88,11 @@ export async function fetchText(url: string, o?: Options) {
           : "";
       const cookieHeader = [setCookies, `${solved.wci}=${solved.cookieVal}`].filter(Boolean).join("; ");
       const res2 = await http(url, { ...o, cookie: cookieHeader });
-      return { status: res2.status, body: await res2.text() };
+      return { status: res2.status, body: await res2.text(), finalUrl: res2.url };
     }
   }
 
-  return { status: res.status, body };
+  return { status: res.status, body, finalUrl: res.url };
 }
 
 export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

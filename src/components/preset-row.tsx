@@ -2,14 +2,20 @@ import { useState } from "react";
 import type { Preset } from "../lib/types";
 
 const SOURCE: Record<string, string> = {
-  description: "deskripsi",
-  bio: "bio",
-  bioLink: "link di bio",
+  description: "deskripsi VT",
+  bio: "bio kreator",
+  bioLink: "tautan di bio",
   comment: "komentar",
 };
 
-export function PresetRow({ preset }: { preset: Preset }) {
+type Props = {
+  preset: Preset;
+  fallbackThumb?: string | null;
+};
+
+export function PresetRow({ preset, fallbackThumb = null }: Props) {
   const [copied, setCopied] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
 
   const copy = async () => {
     try {
@@ -21,7 +27,10 @@ export function PresetRow({ preset }: { preset: Preset }) {
     }
   };
 
+  const thumbUrl = !imgFailed ? preset.thumb ?? fallbackThumb : null;
+
   const meta = [
+    preset.type === "5mb" ? "5MB Alight Motion" : "File XML / Drive",
     SOURCE[preset.source] ?? preset.source,
     preset.detail,
     preset.byAuthor ? "pembuat video" : null,
@@ -31,11 +40,22 @@ export function PresetRow({ preset }: { preset: Preset }) {
 
   return (
     <li className="preset">
-      {preset.thumb && <img className="preset-thumb" src={preset.thumb} alt="" referrerPolicy="no-referrer" />}
+      {thumbUrl && (
+        <img
+          className="preset-thumb"
+          src={thumbUrl}
+          alt={preset.title || "Thumbnail preset"}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setImgFailed(true)}
+        />
+      )}
       <div className="preset-body">
         <p className="preset-title">
-          <span className="tag">{preset.type === "5mb" ? "5MB" : "XML"}</span>
-          {preset.title || (preset.type === "5mb" ? "Link preset" : "File XML")}
+          <span className={`tag ${preset.type === "5mb" ? "tag-5mb" : "tag-xml"}`}>
+            {preset.type === "5mb" ? "5MB" : "XML"}
+          </span>
+          <span>{preset.title || (preset.type === "5mb" ? "Preset Alight Motion (5MB)" : "File Preset XML")}</span>
         </p>
         <p className="muted preset-meta">{meta.join(" · ")}</p>
         <a className="mono preset-url" href={preset.url} target="_blank" rel="noopener noreferrer">
@@ -46,8 +66,8 @@ export function PresetRow({ preset }: { preset: Preset }) {
         <a className="btn small" href={preset.url} target="_blank" rel="noopener noreferrer">
           Buka
         </a>
-        <button type="button" className="btn small ghost" onClick={copy}>
-          {copied ? "Tersalin" : "Salin"}
+        <button type="button" className={`btn small ${copied ? "btn-sage" : "ghost"}`} onClick={copy}>
+          {copied ? "✓ Tersalin" : "Salin"}
         </button>
       </div>
     </li>

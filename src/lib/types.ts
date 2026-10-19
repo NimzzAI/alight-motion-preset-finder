@@ -23,20 +23,32 @@ export type FindResult = {
     count: number;
     duration: string | null;
     createdAt: string | number | null;
+    region?: string | null;
     url: string | null;
     src: string | null;
     proxy: string | null;
     cover: string | null;
+    images?: string[];
     description: string;
     views: number | null;
     likes: number | null;
     comments: number | null;
+    shares?: number | null;
+    music?: {
+      title: string;
+      author: string;
+      url?: string | null;
+    } | null;
   };
   author: {
     username: string;
     nickname: string;
     avatar: string | null;
     subs?: string | null;
+    followers?: number | null;
+    likes?: number | null;
+    videos?: number | null;
+    verified?: boolean;
   };
   scanned: { comments: number; replies: number };
   presets: Preset[];
@@ -52,13 +64,21 @@ export type PresetOriginVideo = {
   proxy: string | null;
   images: string[];
   duration: number | null;
+  createdAt?: number | null;
+  region?: string | null;
   views: number | null;
   likes: number | null;
   comments: number | null;
+  shares?: number | null;
+  music?: {
+    title: string;
+    author: string;
+  } | null;
   author: {
     username: string;
     nickname: string;
     avatar: string | null;
+    followers?: number | null;
   };
 };
 

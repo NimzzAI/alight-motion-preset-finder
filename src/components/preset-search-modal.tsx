@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { fmtNum } from "../lib/validate";
 import type { ApiResponse, DiscoveredPreset, KeywordPresetSearchResult, PresetOriginVideo } from "../lib/types";
 
 const QUICK_TOPICS = [
+  "preset gfx",
+  "preset 3d",
   "preset elitis",
+  "preset body back",
   "preset jj slowmo",
   "preset velocity",
-  "preset 3d transisi",
   "preset foto aesthetic",
   "preset jedag jedug",
 ];
@@ -17,6 +19,21 @@ const SOURCE_LABEL: Record<string, string> = {
   bioLink: "tautan bio",
   comment: "komentar",
 };
+
+const dateFmt = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" });
+
+function formatUnixDate(ts: number | null | undefined): string | null {
+  if (!ts || ts <= 0) return null;
+  const ms = ts < 10_000_000_000 ? ts * 1000 : ts;
+  try {
+    return dateFmt.format(new Date(ms));
+  } catch {
+    return null;
+  }
+}
+
+const withDownloadName = (url: string, name: string) =>
+  url.includes("/api/media?") ? `${url}&name=${encodeURIComponent(name)}` : url;
 
 type Props = {
   open: boolean;
@@ -36,6 +53,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
   const [viewMode, setViewMode] = useState<"presets" | "videos">("presets");
   const [activeVtPreview, setActiveVtPreview] = useState<PresetOriginVideo | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -50,7 +68,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
   const executeSearch = useCallback(async (searchQuery: string, nextVariation: number) => {
     const clean = searchQuery.trim();
     if (clean.length < 2) {
-      setError("Masukkan judul preset minimal 2 karakter (contoh: preset elitis).");
+      setError("Masukkan judul preset minimal 2 karakter (contoh: preset body back).");
       return;
     }
 
@@ -127,9 +145,13 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
     executeSearch(topic, nextVar);
   };
 
-  const copyText = async (text: string, label: string) => {
+  const copyText = async (text: string, label: string, key?: string) => {
     try {
       await navigator.clipboard.writeText(text);
+      if (key) {
+        setCopiedId(key);
+        setTimeout(() => setCopiedId((prev) => (prev === key ? null : prev)), 1600);
+      }
       showToast(`${label} disalin ke clipboard`);
     } catch {
       showToast("Gagal menyalin tautan");
@@ -146,14 +168,25 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
     return true;
   });
 
-  const stepIndex = elapsed < 4 ? 1 : elapsed < 10 ? 2 : 3;
+  const stepIndex = elapsed < 3 ? 1 : elapsed < 8 ? 2 : 3;
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-preset-title">
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-preset-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="modal-sheet">
         <div className="modal-topbar">
           <div className="modal-topbar-left">
-            <span className="modal-index-label">Pencarian Katalog VT TikTok</span>
+            <span className="modal-index-label">
+              <span className="kicker-dot" aria-hidden="true" />
+              Pencarian Katalog VT TikTok · Mesin Golang (5MB &amp; XML + Thumbnail VT)
+            </span>
             <h2 id="modal-preset-title" className="modal-heading">
               Cari Preset Lewat Judul
             </h2>
@@ -165,9 +198,10 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
 
         <div className="modal-body">
           <p className="modal-desc">
-            Ketik nama atau gaya preset (contoh: <span className="mono">preset elitis</span>). Sistem akan mencari
-            video maupun slideshow foto di TikTok, mengambil link VT-nya, lalu mengekstrak minimal 10 preset berbeda dari
-            deskripsi, bio, dan komentar.
+            Ketik nama atau gaya preset (contoh: <span className="mono">preset body back</span> atau{" "}
+            <span className="mono">preset elitis</span>). Sistem menelusuri video maupun slideshow foto di TikTok via
+            Golang, mengambil link VT berserta thumbnail &amp; metadatanya, lalu mengekstrak preset{" "}
+            <strong>5MB &amp; XML</strong> dari deskripsi, bio, dan komentar.
           </p>
 
           <form className="modal-search-form" onSubmit={handleSubmit}>
@@ -175,18 +209,48 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
               <input
                 ref={inputRef}
                 type="text"
-                className="input modal-input"
-                placeholder="Contoh: preset elitis, preset jj slowmo, preset velocity..."
+                className="input modal-input has-clear"
+                placeholder="Contoh: preset body back, preset elitis, preset jj slowmo..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 autoComplete="off"
                 spellCheck={false}
               />
+              {query && !loading && (
+                <button
+                  type="button"
+                  className="input-clear-btn"
+                  onClick={() => {
+                    setQuery("");
+                    inputRef.current?.focus();
+                  }}
+                  aria-label="Bersihkan kata kunci"
+                  title="Bersihkan"
+                >
+                  ×
+                </button>
+              )}
               {loading && <span className="input-scan-bar" aria-hidden="true" />}
             </div>
             <div className="modal-form-actions">
               <button type="submit" className="btn" disabled={loading}>
-                {loading ? `Memindai VT (${elapsed}d)...` : "Cari 10+ Preset"}
+                {loading ? (
+                  <span className="btn-loading-content">
+                    <svg
+                      className="btn-spinner"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
+                      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                      <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+                    </svg>
+                    Memindai VT ({elapsed}d)...
+                  </span>
+                ) : (
+                  "Cari 10+ Preset"
+                )}
               </button>
               <button
                 type="button"
@@ -207,7 +271,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                 <button
                   key={t}
                   type="button"
-                  className={`topic-btn ${query.toLowerCase() === t ? "active" : ""}`}
+                  className={`topic-btn ${query.trim().toLowerCase() === t ? "active" : ""}`}
                   onClick={() => handleSelectTopic(t)}
                   disabled={loading}
                 >
@@ -222,18 +286,33 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
               <div className="bar" />
               <ol className="pipeline-steps">
                 <li className={stepIndex >= 1 ? "active" : ""}>
-                  <span className="mono">01.</span> Mencari kandidat video &amp; slideshow foto TikTok untuk &ldquo;{query}
-                  &rdquo; (Variasi #{variation + 1})
+                  <span className="step-pulse-dot" aria-hidden="true" />
+                  <span>
+                    <strong className="mono">01.</strong> Mencari kandidat video &amp; slideshow foto TikTok via Golang
+                    untuk &ldquo;{query}&rdquo; (Variasi #{variation + 1})
+                  </span>
                 </li>
                 <li className={stepIndex >= 2 ? "active" : ""}>
-                  <span className="mono">02.</span> Mengambil link VT dan memindai deskripsi, bio, link-in-bio, serta
-                  komentar kreator
+                  <span className="step-pulse-dot" aria-hidden="true" />
+                  <span>
+                    <strong className="mono">02.</strong> Mengambil thumbnail VT, metadata, serta memindai deskripsi,
+                    bio, link-in-bio, komentar &amp; balasan kreator
+                  </span>
                 </li>
                 <li className={stepIndex >= 3 ? "active" : ""}>
-                  <span className="mono">03.</span> Membuka redirect shortlink dan mengumpulkan minimal 10 preset unik (
-                  <span className="mono tabular-nums">{elapsed} detik</span>)
+                  <span className="step-pulse-dot" aria-hidden="true" />
+                  <span>
+                    <strong className="mono">03.</strong> Membuka shortlink 5MB &amp; XML Google Drive/MediaFire dan
+                    menyatukan minimal 10 preset unik (<span className="mono tabular-nums">{elapsed} detik</span>)
+                  </span>
                 </li>
               </ol>
+
+              <div className="skeleton-grid" aria-hidden="true">
+                <div className="skeleton-card" />
+                <div className="skeleton-card" />
+                <div className="skeleton-card" />
+              </div>
             </div>
           )}
 
@@ -250,6 +329,8 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                   <span>
                     <strong className="mono tabular-nums">{result.totalPresets}</strong> preset ditemukan
                   </span>
+                  <span className="tag tag-5mb">5MB: {count5mb}</span>
+                  <span className="tag tag-xml">XML: {countXml}</span>
                   <span aria-hidden="true">·</span>
                   <span>
                     dari <strong className="mono tabular-nums">{result.videos.length}</strong> VT aktif (
@@ -308,7 +389,8 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                   <div className="vt-preview-header">
                     <div>
                       <span className="modal-index-label">
-                        Pratinjau VT Asal · {activeVtPreview.kind === "photo" ? "Slideshow Foto" : "Video TikTok"}
+                        Pratinjau &amp; Metadata VT Asal ·{" "}
+                        {activeVtPreview.kind === "photo" ? "Slideshow Foto" : "Video TikTok"}
                       </span>
                       <p className="vt-preview-author">
                         @{activeVtPreview.author.username}
@@ -316,6 +398,30 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                       </p>
                     </div>
                     <div className="vt-preview-actions">
+                      {activeVtPreview.cover && (
+                        <a
+                          href={withDownloadName(
+                            activeVtPreview.cover,
+                            `${activeVtPreview.author.username}-${activeVtPreview.id}-thumb.jpg`,
+                          )}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn small ghost"
+                        >
+                          Unduh Thumbnail VT
+                        </a>
+                      )}
+                      {activeVtPreview.proxy && (
+                        <a
+                          href={withDownloadName(
+                            activeVtPreview.proxy,
+                            `${activeVtPreview.author.username}-${activeVtPreview.id}.mp4`,
+                          )}
+                          className="btn small ghost"
+                        >
+                          Unduh Video VT
+                        </a>
+                      )}
                       <a
                         href={activeVtPreview.url}
                         target="_blank"
@@ -333,7 +439,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                             onClose();
                           }}
                         >
-                          Buka di Halaman Utama
+                          Inspect Lengkap di Halaman Utama
                         </button>
                       )}
                       <button
@@ -382,23 +488,78 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                     </div>
                     <div className="vt-preview-info">
                       <p className="vt-preview-caption">{activeVtPreview.description || "Tanpa deskripsi"}</p>
-                      <p className="muted mono vt-preview-stats">
-                        {[
-                          activeVtPreview.views !== null ? `${fmtNum(activeVtPreview.views)} tayangan` : null,
-                          activeVtPreview.likes !== null ? `${fmtNum(activeVtPreview.likes)} suka` : null,
-                          activeVtPreview.comments !== null ? `${fmtNum(activeVtPreview.comments)} komentar` : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </p>
+
+                      <dl className="vt-preview-meta-dl">
+                        <div>
+                          <dt>ID VT</dt>
+                          <dd className="mono">{activeVtPreview.id}</dd>
+                        </div>
+                        {activeVtPreview.duration != null && activeVtPreview.duration > 0 && (
+                          <div>
+                            <dt>Durasi</dt>
+                            <dd>{activeVtPreview.duration} detik</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.createdAt != null && activeVtPreview.createdAt > 0 && (
+                          <div>
+                            <dt>Diunggah</dt>
+                            <dd>{formatUnixDate(activeVtPreview.createdAt)}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.region && (
+                          <div>
+                            <dt>Wilayah</dt>
+                            <dd>{activeVtPreview.region}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.views != null && (
+                          <div>
+                            <dt>Tayangan</dt>
+                            <dd className="mono">{fmtNum(activeVtPreview.views)}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.likes != null && (
+                          <div>
+                            <dt>Suka</dt>
+                            <dd className="mono">{fmtNum(activeVtPreview.likes)}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.comments != null && (
+                          <div>
+                            <dt>Komentar</dt>
+                            <dd className="mono">{fmtNum(activeVtPreview.comments)}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.shares != null && (
+                          <div>
+                            <dt>Dibagikan</dt>
+                            <dd className="mono">{fmtNum(activeVtPreview.shares)}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.author.followers != null && (
+                          <div>
+                            <dt>Pengikut</dt>
+                            <dd className="mono">{fmtNum(activeVtPreview.author.followers)}</dd>
+                          </div>
+                        )}
+                        {activeVtPreview.music?.title && (
+                          <div>
+                            <dt>Musik</dt>
+                            <dd>
+                              {[activeVtPreview.music.title, activeVtPreview.music.author].filter(Boolean).join(" · ")}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+
                       <div className="vt-url-box">
                         <span className="mono vt-url-text">{activeVtPreview.url}</span>
                         <button
                           type="button"
-                          className="btn small ghost"
-                          onClick={() => copyText(activeVtPreview.url, "Link VT")}
+                          className={`btn small ${copiedId === `vt-${activeVtPreview.id}` ? "btn-sage" : "ghost"}`}
+                          onClick={() => copyText(activeVtPreview.url, "Link VT", `vt-${activeVtPreview.id}`)}
                         >
-                          Salin Link VT
+                          {copiedId === `vt-${activeVtPreview.id}` ? "✓ Tersalin" : "Salin Link VT"}
                         </button>
                       </div>
                     </div>
@@ -408,8 +569,12 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
 
               {filteredPresets.length === 0 ? (
                 <div className="empty-search-box">
-                  <p>Tidak ada preset untuk filter ini pada kumpulan VT saat ini.</p>
-                  <button type="button" className="btn small" onClick={handleShuffleVariation}>
+                  <p>
+                    {allPresets.length === 0
+                      ? `Belum menemukan preset dari kumpulan VT saat ini untuk "${result.query}". Coba acak variasi VT lain atau gunakan kata kunci yang lebih spesifik.`
+                      : "Tidak ada preset untuk filter tipe ini pada kumpulan VT saat ini."}
+                  </p>
+                  <button type="button" className="btn small btn-sage" onClick={handleShuffleVariation}>
                     Coba Variasi VT Lain
                   </button>
                 </div>
@@ -426,15 +591,57 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                       item.size,
                     ].filter(Boolean);
 
+                    const vtStatsParts = [
+                      item.vt.views != null ? `${fmtNum(item.vt.views)} tayangan` : null,
+                      item.vt.likes != null ? `${fmtNum(item.vt.likes)} suka` : null,
+                      item.vt.comments != null ? `${fmtNum(item.vt.comments)} komentar` : null,
+                      item.vt.duration ? `${item.vt.duration}d` : null,
+                      item.vt.region ? item.vt.region : null,
+                    ].filter(Boolean);
+
+                    const thumbSrc = item.vt.cover ?? item.thumb;
+                    const isCopied = copiedId === item.id;
+
                     return (
-                      <li key={item.id} className="modal-preset-item">
-                        <div className="modal-preset-index mono tabular-nums">{num}</div>
+                      <li
+                        key={item.id}
+                        className="modal-preset-item stagger-item"
+                        style={{ "--stagger-i": Math.min(idx, 14) } as CSSProperties}
+                      >
+                        <div className="modal-preset-left-col">
+                          <div className="modal-preset-index mono tabular-nums">{num}</div>
+                          {thumbSrc && (
+                            <button
+                              type="button"
+                              className="modal-vt-thumb-btn"
+                              onClick={() => setActiveVtPreview(item.vt)}
+                              title="Klik untuk pratinjau VT & metadata"
+                            >
+                              <img
+                                src={thumbSrc}
+                                alt={item.vt.description || "Thumbnail VT"}
+                                className="modal-vt-thumb-img"
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                              />
+                              <span className="modal-vt-thumb-tag mono">
+                                {item.vt.kind === "photo"
+                                  ? "FOTO"
+                                  : item.vt.duration
+                                    ? `${item.vt.duration}d`
+                                    : "VT"}
+                              </span>
+                            </button>
+                          )}
+                        </div>
 
                         <div className="modal-preset-main">
                           <div className="modal-preset-header">
-                            <span className="tag">{item.type === "5mb" ? "5MB" : "XML"}</span>
+                            <span className={`tag ${item.type === "5mb" ? "tag-5mb" : "tag-xml"}`}>
+                              {item.type === "5mb" ? "5MB" : "XML"}
+                            </span>
                             <span className="modal-preset-name">
-                              {item.title || (item.type === "5mb" ? "Preset Alight Motion" : "File Preset XML")}
+                              {item.title || (item.type === "5mb" ? "Preset Alight Motion (5MB)" : "File Preset XML")}
                             </span>
                           </div>
 
@@ -453,6 +660,12 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                             <span className="vt-origin-author">
                               VT {item.vt.kind === "photo" ? "Foto" : "Video"} · @{item.vt.author.username}
                             </span>
+                            {vtStatsParts.length > 0 && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="mono muted">{vtStatsParts.join(" · ")}</span>
+                              </>
+                            )}
                             <span aria-hidden="true">·</span>
                             <a
                               href={item.vt.url}
@@ -477,17 +690,17 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                           </a>
                           <button
                             type="button"
-                            className="btn small ghost"
-                            onClick={() => copyText(item.url, "Link preset")}
+                            className={`btn small ${isCopied ? "btn-sage" : "ghost"}`}
+                            onClick={() => copyText(item.url, "Link preset", item.id)}
                           >
-                            Salin
+                            {isCopied ? "✓ Tersalin" : "Salin"}
                           </button>
                           <button
                             type="button"
                             className="btn small ghost"
                             onClick={() => setActiveVtPreview(item.vt)}
                           >
-                            Lihat VT
+                            Lihat VT &amp; Meta
                           </button>
                         </div>
                       </li>
@@ -498,83 +711,134 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                 <div className="vt-groups-list">
                   {result.videos.map((group, gIdx) => {
                     const num = String(gIdx + 1).padStart(2, "0");
+                    const grp5mb = group.presets.filter((p) => p.type === "5mb").length;
+                    const grpXml = group.presets.filter((p) => p.type === "xml").length;
                     return (
-                      <article key={group.vt.id} className="vt-group-card">
-                        <div className="vt-group-top">
-                          <div className="vt-group-meta">
-                            <span className="mono tabular-nums vt-group-num">VT {num}</span>
-                            <strong>@{group.vt.author.username}</strong>
-                            <span aria-hidden="true">·</span>
-                            <span>{group.vt.kind === "photo" ? "Slideshow Foto" : "Video TikTok"}</span>
-                            {group.vt.views !== null && (
-                              <>
-                                <span aria-hidden="true">·</span>
-                                <span className="mono tabular-nums">{fmtNum(group.vt.views)} tayangan</span>
-                              </>
-                            )}
-                          </div>
-                          <div className="vt-group-btns">
+                      <article
+                        key={group.vt.id}
+                        className="vt-group-card stagger-item"
+                        style={{ "--stagger-i": Math.min(gIdx, 12) } as CSSProperties}
+                      >
+                        <div className="vt-group-header-grid">
+                          {group.vt.cover && (
                             <button
                               type="button"
-                              className="btn small ghost"
+                              className="vt-group-thumb-btn"
                               onClick={() => setActiveVtPreview(group.vt)}
+                              title="Pratinjau VT & Metadata"
                             >
-                              Pratinjau VT
+                              <img
+                                src={group.vt.cover}
+                                alt={group.vt.description || "Thumbnail VT"}
+                                className="vt-group-thumb-img"
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                              />
+                              <span className="modal-vt-thumb-tag mono">
+                                {group.vt.kind === "photo"
+                                  ? `${group.vt.images.length || 1} Foto`
+                                  : group.vt.duration
+                                    ? `${group.vt.duration}d`
+                                    : "VT"}
+                              </span>
                             </button>
-                            <button
-                              type="button"
-                              className="btn small ghost"
-                              onClick={() => copyText(group.vt.url, "Link VT")}
-                            >
-                              Salin Link VT
-                            </button>
-                            <a
-                              href={group.vt.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn small ghost"
-                            >
-                              Buka VT
-                            </a>
-                          </div>
-                        </div>
+                          )}
 
-                        {group.vt.description && <p className="vt-group-desc">{group.vt.description}</p>}
-
-                        <p className="mono muted vt-group-link-line">{group.vt.url}</p>
-
-                        <ol className="vt-group-presets">
-                          {group.presets.map((p) => (
-                            <li key={p.url} className="vt-sub-preset">
-                              <div className="vt-sub-preset-info">
-                                <span className="tag">{p.type === "5mb" ? "5MB" : "XML"}</span>
-                                <span className="vt-sub-preset-title">
-                                  {p.title || (p.type === "5mb" ? "Link Preset AM" : "File XML")}
-                                </span>
-                                <span className="muted">
-                                  · {SOURCE_LABEL[p.source] ?? p.source}
-                                  {p.size ? ` · ${p.size}` : ""}
-                                </span>
+                          <div className="vt-group-body-col">
+                            <div className="vt-group-top">
+                              <div className="vt-group-meta">
+                                <span className="mono tabular-nums vt-group-num">VT {num}</span>
+                                <strong>@{group.vt.author.username}</strong>
+                                {group.vt.author.nickname && (
+                                  <span className="muted">({group.vt.author.nickname})</span>
+                                )}
+                                {grp5mb > 0 && <span className="tag tag-5mb">5MB: {grp5mb}</span>}
+                                {grpXml > 0 && <span className="tag tag-xml">XML: {grpXml}</span>}
                               </div>
-                              <div className="vt-sub-preset-actions">
-                                <a
-                                  href={p.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="btn small"
-                                >
-                                  Buka
-                                </a>
+                              <div className="vt-group-btns">
                                 <button
                                   type="button"
                                   className="btn small ghost"
-                                  onClick={() => copyText(p.url, "Link preset")}
+                                  onClick={() => setActiveVtPreview(group.vt)}
                                 >
-                                  Salin
+                                  Pratinjau &amp; Meta
                                 </button>
+                                <button
+                                  type="button"
+                                  className={`btn small ${copiedId === `grp-${group.vt.id}` ? "btn-sage" : "ghost"}`}
+                                  onClick={() => copyText(group.vt.url, "Link VT", `grp-${group.vt.id}`)}
+                                >
+                                  {copiedId === `grp-${group.vt.id}` ? "✓ Tersalin" : "Salin Link VT"}
+                                </button>
+                                <a
+                                  href={group.vt.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn small ghost"
+                                >
+                                  Buka VT
+                                </a>
                               </div>
-                            </li>
-                          ))}
+                            </div>
+
+                            {group.vt.description && <p className="vt-group-desc">{group.vt.description}</p>}
+
+                            <p className="mono muted vt-group-stats-line">
+                              {[
+                                group.vt.kind === "photo" ? "Slideshow Foto" : "Video TikTok",
+                                group.vt.duration ? `${group.vt.duration} detik` : null,
+                                group.vt.views !== null ? `${fmtNum(group.vt.views)} tayangan` : null,
+                                group.vt.likes !== null ? `${fmtNum(group.vt.likes)} suka` : null,
+                                group.vt.comments !== null ? `${fmtNum(group.vt.comments)} komentar` : null,
+                                group.vt.region ? `Wilayah ${group.vt.region}` : null,
+                                group.vt.music?.title ? `🎵 ${group.vt.music.title}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </p>
+
+                            <p className="mono muted vt-group-link-line">{group.vt.url}</p>
+                          </div>
+                        </div>
+
+                        <ol className="vt-group-presets">
+                          {group.presets.map((p) => {
+                            const subKey = `${group.vt.id}-${p.url}`;
+                            return (
+                              <li key={p.url} className="vt-sub-preset">
+                                <div className="vt-sub-preset-info">
+                                  <span className={`tag ${p.type === "5mb" ? "tag-5mb" : "tag-xml"}`}>
+                                    {p.type === "5mb" ? "5MB" : "XML"}
+                                  </span>
+                                  <span className="vt-sub-preset-title">
+                                    {p.title || (p.type === "5mb" ? "Link Preset AM (5MB)" : "File XML")}
+                                  </span>
+                                  <span className="muted">
+                                    · {SOURCE_LABEL[p.source] ?? p.source}
+                                    {p.detail ? ` (${p.detail})` : ""}
+                                    {p.size ? ` · ${p.size}` : ""}
+                                  </span>
+                                </div>
+                                <div className="vt-sub-preset-actions">
+                                  <a
+                                    href={p.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="btn small"
+                                  >
+                                    Buka
+                                  </a>
+                                  <button
+                                    type="button"
+                                    className={`btn small ${copiedId === subKey ? "btn-sage" : "ghost"}`}
+                                    onClick={() => copyText(p.url, "Link preset", subKey)}
+                                  >
+                                    {copiedId === subKey ? "✓ Tersalin" : "Salin"}
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })}
                         </ol>
                       </article>
                     );

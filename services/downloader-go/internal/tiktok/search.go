@@ -112,6 +112,7 @@ type TikTokVideoMetadata struct {
 	ID           string            `json:"id"`
 	Type         string            `json:"type"`
 	Description  string            `json:"description"`
+	Snippet      string            `json:"snippet,omitempty"`
 	CreatedAt    int64             `json:"created_at"`
 	Region       string            `json:"region,omitempty"`
 	Cover        string            `json:"cover"`
@@ -133,8 +134,9 @@ type SearchResponse struct {
 }
 
 type RawCardItem struct {
-	URL   string
-	Views string
+	URL     string
+	Views   string
+	Snippet string
 }
 
 type TikTokSearchEngine struct {
@@ -696,13 +698,21 @@ func (s *TikTokSearchEngine) extractViaWebSSR(ctx context.Context, targetURL, aw
 		})
 	}
 
+	coverURL := videoNode.Get("cover").String()
+	if coverURL == "" {
+		coverURL = videoNode.Get("originCover").String()
+	}
+	if coverURL == "" && len(images) > 0 {
+		coverURL = images[0]
+	}
+
 	return &TikTokVideoMetadata{
 		ID:           id,
 		Type:         mediaType,
 		Description:  desc,
 		CreatedAt:    createTime,
 		Region:       locationCreated,
-		Cover:        videoNode.Get("cover").String(),
+		Cover:        coverURL,
 		DynamicCover: videoNode.Get("dynamicCover").String(),
 		Author:       author,
 		Stats:        stats,
@@ -826,53 +836,243 @@ func (s *TikTokSearchEngine) fetchSearchCardsViaChromedp(ctx context.Context, ke
 	return items, nil
 }
 
+var (
+	webIndexMu       sync.Mutex
+	lastWebIndexCall time.Time
+	searchResultMu   sync.RWMutex
+	searchResultMap  = make(map[string]cachedSearchEntry)
+)
+
+type cachedSearchEntry struct {
+	at     time.Time
+	videos []TikTokVideoMetadata
+}
+
+var searchUserAgents = []string{
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+}
+
+var genericPresetWords = map[string]bool{
+	"tiktok.com":         true,
+	"tiktok":             true,
+	"preset":             true,
+	"pereset":            true,
+	"presets":            true,
+	"prst":               true,
+	"am":                 true,
+	"alight":             true,
+	"motion":             true,
+	"alightmotion":       true,
+	"presetalightmotion": true,
+	"preset5mb":          true,
+	"presetxml":          true,
+	"5mb":                true,
+	"xml":                true,
+	"dibawah":            true,
+	"di":                 true,
+	"bawah":              true,
+	"link":               true,
+	"drive":              true,
+	"vt":                 true,
+	"video":              true,
+}
+
+func extractCoreTopicTokens(keyword string) []string {
+	cleaned := strings.ToLower(strings.TrimSpace(keyword))
+	reWords := regexp.MustCompile(`[a-z0-9]+`)
+	rawTokens := reWords.FindAllString(cleaned, -1)
+
+	var core []string
+	seen := make(map[string]bool)
+	for _, t := range rawTokens {
+		if len(t) < 2 || genericPresetWords[t] {
+			continue
+		}
+		if !seen[t] {
+			seen[t] = true
+			core = append(core, t)
+		}
+	}
+	return core
+}
+
+func buildEngineSearchQueries(keyword string) []string {
+	clean := strings.TrimSpace(keyword)
+	lower := strings.ToLower(clean)
+
+	// When the TypeScript orchestrator supplies an explicit tiktok.com query plan,
+	// execute only that exact query so we do not double DuckDuckGo traffic or dilute relevance.
+	if strings.HasPrefix(lower, "tiktok.com ") {
+		return []string{clean}
+	}
+
+	var queries []string
+	addQ := func(q string) {
+		q = strings.TrimSpace(q)
+		if q == "" {
+			return
+		}
+		for _, existing := range queries {
+			if strings.EqualFold(existing, q) {
+				return
+			}
+		}
+		queries = append(queries, q)
+	}
+
+	coreTokens := extractCoreTopicTokens(clean)
+	if len(coreTokens) > 0 {
+		var mandatoryParts []string
+		for _, t := range coreTokens {
+			mandatoryParts = append(mandatoryParts, "+"+t)
+		}
+		mandatoryTopic := strings.Join(mandatoryParts, " ")
+		compactTopic := strings.Join(coreTokens, "")
+
+		addQ(fmt.Sprintf("tiktok.com #preset%s", compactTopic))
+		addQ(fmt.Sprintf("tiktok.com %s preset alight motion", mandatoryTopic))
+		addQ(fmt.Sprintf("tiktok.com #%spreset", compactTopic))
+	} else {
+		addQ(fmt.Sprintf("tiktok.com %s", clean))
+		addQ("tiktok.com #presetalightmotion #preset5mb")
+	}
+
+	return queries
+}
+
+func (s *TikTokSearchEngine) fetchSingleWebIndexQuery(ctx context.Context, q string, uaIdx int) ([]RawCardItem, int) {
+	webIndexMu.Lock()
+	elapsed := time.Since(lastWebIndexCall)
+	if elapsed < 700*time.Millisecond {
+		time.Sleep(700*time.Millisecond - elapsed)
+	}
+	lastWebIndexCall = time.Now()
+	webIndexMu.Unlock()
+
+	endpoint := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(q)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, 0
+	}
+
+	ua := searchUserAgents[uaIdx%len(searchUserAgents)]
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0
+	}
+	bodyBytes, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, resp.StatusCode
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode
+	}
+
+	rawHTML := string(bodyBytes)
+	reVT := regexp.MustCompile(`(?:https?://)?(?:www\.)?tiktok\.com/@[\w.-]+/(?:video|photo)/\d{15,22}`)
+
+	var out []RawCardItem
+	seen := make(map[string]bool)
+
+	if doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML)); err == nil {
+		doc.Find("div.result, div.web-result").Each(func(_ int, sel *goquery.Selection) {
+			blockHTML, _ := sel.Html()
+			decodedBlock, err := url.QueryUnescape(blockHTML)
+			if err != nil {
+				decodedBlock = blockHTML
+			}
+			matches := reVT.FindAllString(decodedBlock, -1)
+			if len(matches) == 0 {
+				return
+			}
+			titleText := strings.TrimSpace(sel.Find(".result__a").Text())
+			snippetText := strings.TrimSpace(sel.Find(".result__snippet").Text())
+			combinedSnippet := strings.TrimSpace(titleText + " " + snippetText)
+
+			for _, m := range matches {
+				link := m
+				if !strings.HasPrefix(link, "http") {
+					link = "https://www." + strings.TrimPrefix(link, "www.")
+				}
+				vidID := s.extractVideoID(link)
+				key := vidID
+				if key == "" {
+					key = link
+				}
+				if !seen[key] {
+					seen[key] = true
+					out = append(out, RawCardItem{
+						URL:     link,
+						Snippet: combinedSnippet,
+					})
+				}
+			}
+		})
+	}
+
+	decoded, err := url.QueryUnescape(rawHTML)
+	if err != nil {
+		decoded = rawHTML
+	}
+	for _, m := range reVT.FindAllString(decoded, -1) {
+		link := m
+		if !strings.HasPrefix(link, "http") {
+			link = "https://www." + strings.TrimPrefix(link, "www.")
+		}
+		vidID := s.extractVideoID(link)
+		key := vidID
+		if key == "" {
+			key = link
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, RawCardItem{URL: link})
+		}
+	}
+
+	return out, resp.StatusCode
+}
+
 func (s *TikTokSearchEngine) fetchSearchCardsViaWebIndex(ctx context.Context, keyword string, count int) ([]RawCardItem, error) {
-	queries := []string{
-		fmt.Sprintf("site:tiktok.com %s", keyword),
-		fmt.Sprintf("site:tiktok.com %s 5mb xml", keyword),
+	queries := buildEngineSearchQueries(keyword)
+	if len(queries) > 2 {
+		queries = queries[:2]
 	}
 
 	var items []RawCardItem
-	seen := make(map[string]bool)
-	reVT := regexp.MustCompile(`(?:https?://)?(?:www\.)?tiktok\.com/@[\w.-]+/(?:video|photo)/\d{15,22}`)
+	seenIDs := make(map[string]bool)
+	uaCounter := rand.IntN(len(searchUserAgents))
 
 	for _, q := range queries {
-		if len(items) >= count {
+		if len(items) >= count || len(items) >= 10 {
 			break
 		}
-		endpoint := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(q)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		if err != nil {
-			continue
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-		req.Header.Set("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8")
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			continue
-		}
-		bodyBytes, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			continue
+		foundItems, status := s.fetchSingleWebIndexQuery(ctx, q, uaCounter)
+		uaCounter++
+		if status == http.StatusAccepted && len(foundItems) == 0 {
+			time.Sleep(850 * time.Millisecond)
+			foundItems, _ = s.fetchSingleWebIndexQuery(ctx, q, uaCounter)
+			uaCounter++
 		}
 
-		rawHTML := string(bodyBytes)
-		decoded, err := url.QueryUnescape(rawHTML)
-		if err != nil {
-			decoded = rawHTML
-		}
-
-		for _, m := range reVT.FindAllString(decoded, -1) {
-			link := m
-			if !strings.HasPrefix(link, "http") {
-				link = "https://www." + strings.TrimPrefix(link, "www.")
+		for _, it := range foundItems {
+			vidID := s.extractVideoID(it.URL)
+			dedupKey := vidID
+			if dedupKey == "" {
+				dedupKey = it.URL
 			}
-			if !seen[link] {
-				seen[link] = true
-				items = append(items, RawCardItem{URL: link})
+			if !seenIDs[dedupKey] {
+				seenIDs[dedupKey] = true
+				items = append(items, it)
 			}
 		}
 	}
@@ -895,6 +1095,27 @@ func (s *TikTokSearchEngine) Search(ctx context.Context, keyword string, count i
 
 	if count <= 0 {
 		count = 10
+	}
+
+	normKey := strings.ToLower(strings.TrimSpace(keyword))
+	searchResultMu.RLock()
+	cached, hasCached := searchResultMap[normKey]
+	searchResultMu.RUnlock()
+	if hasCached && time.Since(cached.at) < 10*time.Minute && len(cached.videos) >= count/2 {
+		out := cached.videos
+		if len(out) > count {
+			out = out[:count]
+		}
+		return ExtractionResult{
+			Success:    true,
+			StatusCode: http.StatusOK,
+			Data: SearchResponse{
+				Keyword: keyword,
+				Total:   len(out),
+				Videos:  out,
+			},
+			Timestamp: startTime,
+		}
 	}
 
 	rawItems, err := s.fetchSearchCards(ctx, keyword, count)
@@ -921,7 +1142,7 @@ func (s *TikTokSearchEngine) Search(ctx context.Context, keyword string, count i
 
 	finalVideos := make([]TikTokVideoMetadata, len(rawItems))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 5)
+	sem := make(chan struct{}, 6)
 
 	for idx, it := range rawItems {
 		wg.Add(1)
@@ -930,14 +1151,23 @@ func (s *TikTokSearchEngine) Search(ctx context.Context, keyword string, count i
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			meta, enrichErr := s.enrichItem(ctx, item.URL)
+			itemCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+
+			meta, enrichErr := s.enrichItem(itemCtx, item.URL)
 			if enrichErr == nil && meta != nil {
 				meta.CardViews = item.Views
+				meta.Snippet = item.Snippet
+				if meta.Description == "" && item.Snippet != "" {
+					meta.Description = item.Snippet
+				}
 				finalVideos[i] = *meta
 			} else {
 				vidID := s.extractVideoID(item.URL)
 				finalVideos[i] = TikTokVideoMetadata{
 					ID:           vidID,
+					Description:  item.Snippet,
+					Snippet:      item.Snippet,
 					CanonicalURL: item.URL,
 					CardViews:    item.Views,
 				}
@@ -945,6 +1175,15 @@ func (s *TikTokSearchEngine) Search(ctx context.Context, keyword string, count i
 		}(idx, it)
 	}
 	wg.Wait()
+
+	if len(finalVideos) > 0 {
+		searchResultMu.Lock()
+		searchResultMap[normKey] = cachedSearchEntry{
+			at:     time.Now(),
+			videos: finalVideos,
+		}
+		searchResultMu.Unlock()
+	}
 
 	return ExtractionResult{
 		Success:    true,
@@ -957,3 +1196,4 @@ func (s *TikTokSearchEngine) Search(ctx context.Context, keyword string, count i
 		Timestamp: startTime,
 	}
 }
+

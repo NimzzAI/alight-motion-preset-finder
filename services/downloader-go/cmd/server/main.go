@@ -159,7 +159,7 @@ func main() {
 		writeJSON(w, status, res)
 	})
 
-	port := os.Getenv("PORT")
+	port := os.Getenv("GO_PORT")
 	if port == "" {
 		port = "8090"
 	}

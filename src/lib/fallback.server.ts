@@ -12,7 +12,7 @@ const asNumber = (v: unknown) => (typeof v === "number" ? v : v == null ? null :
 export async function runBintang(input: string): Promise<FindResult> {
   const res = await fetch(`${settings.finder.fallbacks.bintang}?url=${encodeURIComponent(input)}`, {
     headers: { "User-Agent": DESKTOP_UA, Accept: "application/json" },
-    signal: AbortSignal.timeout(40000),
+    signal: AbortSignal.timeout(8500),
   });
   if (!res.ok) throw new Error(`bintang ${res.status}`);
 
@@ -107,7 +107,7 @@ async function readSse(res: Response): Promise<any> {
 export async function runAmfinder(input: string): Promise<FindResult> {
   const res = await fetch(`${settings.finder.fallbacks.amfinder}?url=${encodeURIComponent(input)}`, {
     headers: { Accept: "text/event-stream", "User-Agent": "Mozilla/5.0 (compatible; AMFinderScraper/1.0)" },
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(9500),
   });
   if (!res.ok) throw new Error(`amfinder ${res.status}`);
   if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) throw new Error("amfinder format aneh");

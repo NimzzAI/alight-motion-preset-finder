@@ -1,13 +1,19 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { settings } from "../config/settings.server";
 import { runBintang } from "./fallback.server";
-import { type Found, finishFound, getComments, getProfile, getReplies, makeAdder } from "./finder.server";
+import {
+  type Found,
+  finishFound,
+  getComments,
+  getProfile,
+  getReplies,
+  makeAdder,
+  scoreReplyParent,
+} from "./finder.server";
 import { DESKTOP_UA, fetchText, mapLimit } from "./http.server";
 import { extractLinks, isAm, isFile } from "./links.server";
 import { mediaLink } from "./sign.server";
-import { videoFields } from "./video-src.server";
+import { ensureGoServiceRunning } from "./tiktok-page.server";
+import { fromTikwm, isSignedWebappUrl, videoFields } from "./video-src.server";
 import type {
   DiscoveredPreset,
   KeywordPresetSearchResult,
@@ -16,31 +22,177 @@ import type {
   PresetOriginVideo,
 } from "./types";
 
-const QUERY_MODIFIERS = [
-  "alight motion 5mb",
-  "preset am xml",
-  "preset alight motion",
-  "5mb dibawah",
-  "preset am 5mb",
-  "preset xml drive",
-];
+const GENERIC_PRESET_STOP_WORDS = new Set([
+  "preset",
+  "pereset",
+  "presets",
+  "prst",
+  "am",
+  "alight",
+  "motion",
+  "alightmotion",
+  "presetalightmotion",
+  "preset5mb",
+  "presetxml",
+  "5mb",
+  "xml",
+  "dibawah",
+  "di",
+  "bawah",
+  "link",
+  "drive",
+  "tiktok",
+  "vt",
+  "video",
+  "cari",
+  "buat",
+  "bikin",
+  "terbaru",
+  "viral",
+  "fyp",
+]);
+
+const TOPIC_SYNONYMS: Record<string, string[]> = {
+  gfx: ["gfx", "gfxdesign", "presetgfx", "gfxpreset", "designgfx", "gfxanime", "gfxtutorial"],
+  "3d": ["3d", "preset3d", "3dpreset", "3dtransition", "3dtransisi", "3dcamera", "3dshape", "3dedit"],
+  transisi: ["transisi", "transition", "transitions"],
+  transition: ["transition", "transisi", "transitions"],
+  foto: ["foto", "photo", "editfoto", "fotopreset", "presetfoto"],
+  photo: ["photo", "foto", "editfoto", "photopreset"],
+  jj: ["jj", "jedag", "jedug", "jedagjedug", "jjslowmo"],
+  jedag: ["jedag", "jedug", "jj", "jedagjedug"],
+  jedug: ["jedug", "jedag", "jj", "jedagjedug"],
+  slowmo: ["slowmo", "slow", "jjslowmo"],
+  velocity: ["velocity", "velo", "presetvelocity"],
+  elitis: ["elitis", "presetelitis", "elitispreset"],
+  aesthetic: ["aesthetic", "estetik", "aesthetics"],
+};
+
+function stripUrlsFromText(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(
+      /(?:www\.)?(?:alight\.(?:link|to)|alightcreative\.com|drive\.google\.com|mediafire\.com|sfile\.mobi|vt\.tiktok\.com|tiktok\.com)\/\S+/gi,
+      " ",
+    );
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function extractCoreTokens(rawQuery: string): string[] {
+  const words = rawQuery
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const core: string[] = [];
+  const seen = new Set<string>();
+  for (const w of words) {
+    if (w.length < 2 || GENERIC_PRESET_STOP_WORDS.has(w)) continue;
+    if (!seen.has(w)) {
+      seen.add(w);
+      core.push(w);
+    }
+  }
+  return core;
+}
+
+function tokenMatchesText(haystackLower: string, token: string): boolean {
+  const cleanHaystack = stripUrlsFromText(haystackLower);
+  const variants = TOPIC_SYNONYMS[token] ?? [token];
+  return variants.some((v) => {
+    const esc = escapeRegExp(v);
+    const re = new RegExp(
+      `(?:^|[^a-z0-9])(?:preset|pereset|prst|am|edit|transisi|transition|jj)?${esc}(?:preset|pereset|prst|am|edit|design|transisi|transition|anime|tutorial|camera|shape|foto|photo|slowmo|velo|tiktok)?(?=$|[^a-z0-9])`,
+      "i",
+    );
+    return re.test(cleanHaystack);
+  });
+}
+
+function userExplicitlyWantsJj(coreTokens: string[], rawQuery: string): boolean {
+  const q = rawQuery.toLowerCase();
+  if (/\b(jj|jedag|jedug|jedagjedug)\b/.test(q)) return true;
+  return coreTokens.some((t) => t === "jj" || t === "jedag" || t === "jedug");
+}
+
+function evaluateCandidateTopic(
+  vt: RawCandidateVT,
+  coreTokens: string[],
+  rawQuery: string,
+  presets: Preset[] = [],
+): { matchedCount: number; ratio: number; isOffTopicJj: boolean } {
+  if (coreTokens.length === 0) {
+    return { matchedCount: 1, ratio: 1, isOffTopicJj: false };
+  }
+
+  const presetTitles = presets
+    .map((p) => p.title ?? "")
+    .filter((t) => !/^proyek baru\s*\d*$/i.test(t.trim()))
+    .join(" ");
+
+  // Only fall back to DuckDuckGo snippet if the actual TikTok video description wasn't extracted,
+  // because search engine snippets can include unrelated "Related Searches" from the TikTok page footer.
+  const hasRealDescription = vt.description.trim().length > 0;
+  const fullText = stripUrlsFromText(
+    [
+      vt.description,
+      hasRealDescription ? "" : (vt.snippet ?? ""),
+      vt.author.username,
+      vt.author.nickname,
+      vt.author.signature ?? "",
+      presetTitles,
+    ]
+      .join(" ")
+      .toLowerCase(),
+  );
+
+  let matchedCount = 0;
+  for (const token of coreTokens) {
+    if (tokenMatchesText(fullText, token)) {
+      matchedCount += 1;
+    }
+  }
+
+  const ratio = matchedCount / coreTokens.length;
+  const wantsJj = userExplicitlyWantsJj(coreTokens, rawQuery);
+  const looksLikePureJjOrMeme =
+    !wantsJj &&
+    matchedCount === 0 &&
+    /\b(jj|jedag\s*jedug|jedagjedug|jjmeme|memefb|memestiktok|telolelolet)\b/i.test(fullText);
+
+  return {
+    matchedCount,
+    ratio,
+    isOffTopicJj: looksLikePureJjOrMeme,
+  };
+}
 
 type RawCandidateVT = {
   id: string;
   url: string;
   kind: "video" | "photo";
   description: string;
+  snippet?: string;
   cover: string | null;
   playUrl: string | null;
   images: string[];
   duration: number | null;
+  createdAt: number | null;
+  region: string | null;
   views: number | null;
   likes: number | null;
   comments: number | null;
+  shares: number | null;
+  music: { title: string; author: string } | null;
   author: {
     username: string;
     nickname: string;
     avatar: string | null;
+    followers: number | null;
     signature?: string;
     bioLink?: string;
   };
@@ -54,64 +206,6 @@ type QueryHistory = {
 };
 
 const queryHistoryMap = new Map<string, QueryHistory>();
-
-let goProc: ChildProcess | null = null;
-let goStarting: Promise<boolean> | null = null;
-
-async function ensureGoServiceRunning(): Promise<boolean> {
-  const { goServiceUrl } = settings.downloader;
-  if (!goServiceUrl) return false;
-
-  try {
-    const health = await fetch(`${goServiceUrl}/health`, {
-      signal: AbortSignal.timeout(1200),
-    });
-    if (health.ok) return true;
-  } catch {
-    // Not listening yet, attempt to spawn local compiled Golang binary
-  }
-
-  if (goStarting) return goStarting;
-
-  goStarting = (async () => {
-    try {
-      const binCandidates = [
-        path.resolve(process.cwd(), "services/downloader-go/downloader-bin"),
-        "/app/applet/services/downloader-go/downloader-bin",
-      ];
-      const binPath = binCandidates.find((p) => fs.existsSync(p));
-      if (!binPath) return false;
-
-      if (!goProc || goProc.killed) {
-        goProc = spawn(binPath, [], {
-          env: { ...process.env, PORT: "8090" },
-          stdio: "ignore",
-          detached: true,
-        });
-        goProc.unref();
-      }
-
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 200));
-        try {
-          const check = await fetch(`${goServiceUrl}/health`, {
-            signal: AbortSignal.timeout(800),
-          });
-          if (check.ok) return true;
-        } catch {
-          // Wait for startup
-        }
-      }
-      return false;
-    } catch {
-      return false;
-    } finally {
-      goStarting = null;
-    }
-  })();
-
-  return goStarting;
-}
 
 function getQueryHistory(normalizedQuery: string): QueryHistory {
   const now = Date.now();
@@ -143,42 +237,94 @@ function recordQueryHistory(normalizedQuery: string, videoIds: string[], presetU
 
 function buildSearchQueries(rawQuery: string, variationSeed: number): Array<{ keyword: string; cursor: number }> {
   const clean = rawQuery.trim().replace(/\s+/g, " ");
-  const hasPresetWord = /\b(preset|am|alight\s*motion|5mb|xml)\b/i.test(clean);
-  const base = hasPresetWord ? clean : `preset ${clean}`;
+  const coreTokens = extractCoreTokens(clean);
 
-  const pool: Array<{ keyword: string; cursor: number }> = [
-    { keyword: `${base} alight motion`, cursor: 0 },
-    { keyword: `${clean} 5mb xml`, cursor: 0 },
-    { keyword: `${base} 5mb`, cursor: 12 },
-    { keyword: `${base} xml`, cursor: 0 },
-    { keyword: base, cursor: 0 },
-    { keyword: `${clean} preset am`, cursor: 10 },
-    { keyword: `${base} ${QUERY_MODIFIERS[variationSeed % QUERY_MODIFIERS.length]}`, cursor: 20 },
-  ];
+  const pool: Array<{ keyword: string; cursor: number }> = [];
+  const addPlan = (keyword: string, cursor = 0) => {
+    if (!pool.some((p) => p.keyword.toLowerCase() === keyword.toLowerCase())) {
+      pool.push({ keyword, cursor });
+    }
+  };
+
+  if (coreTokens.length > 0) {
+    const mandatoryTopic = coreTokens.map((t) => `+${t}`).join(" ");
+    const compactTopic = coreTokens.join("");
+
+    if (coreTokens.includes("gfx")) {
+      addPlan(`tiktok.com #presetgfx`, 0);
+      addPlan(`tiktok.com #gfxpreset`, 0);
+      addPlan(`tiktok.com +gfx preset alight motion`, 0);
+      addPlan(`tiktok.com #gfxdesign preset`, 0);
+      addPlan(`tiktok.com +gfx +preset 5mb`, 10);
+      addPlan(`tiktok.com +gfx +preset xml`, 10);
+    } else if (coreTokens.includes("3d")) {
+      addPlan(`tiktok.com #preset3d`, 0);
+      addPlan(`tiktok.com #3dpreset`, 0);
+      addPlan(`tiktok.com +3d preset alight motion`, 0);
+      addPlan(`tiktok.com #3dtransition preset`, 0);
+      addPlan(`tiktok.com +3d +preset 5mb`, 10);
+      addPlan(`tiktok.com +3d +preset xml`, 10);
+    } else {
+      addPlan(`tiktok.com #preset${compactTopic}`, 0);
+      addPlan(`tiktok.com ${mandatoryTopic} preset alight motion`, 0);
+      addPlan(`tiktok.com #${compactTopic}preset`, 0);
+      addPlan(`tiktok.com ${mandatoryTopic} +preset 5mb`, 10);
+      addPlan(`tiktok.com ${mandatoryTopic} +preset xml`, 10);
+    }
+  } else {
+    const hasPresetWord = /\b(preset|am|alight\s*motion|5mb|xml)\b/i.test(clean);
+    const base = hasPresetWord ? clean : `preset ${clean}`;
+    addPlan(`tiktok.com ${base} #presetalightmotion`, 0);
+    addPlan(`tiktok.com #presetalightmotion #preset5mb`, 0);
+    addPlan(`tiktok.com #presetalightmotion #presetxml`, 10);
+  }
 
   const offset = variationSeed % pool.length;
   return [...pool.slice(offset), ...pool.slice(0, offset)];
 }
 
-function scoreCandidate(vt: RawCandidateVT, recentlyUsedVideos: Set<string>): number {
-  const text = `${vt.description} ${vt.author.signature ?? ""} ${vt.author.bioLink ?? ""}`.toLowerCase();
+function scoreCandidate(
+  vt: RawCandidateVT,
+  coreTokens: string[],
+  rawQuery: string,
+  recentlyUsedVideos: Set<string>,
+): number {
+  const text = `${vt.description} ${vt.snippet ?? ""} ${vt.author.signature ?? ""} ${vt.author.bioLink ?? ""}`.toLowerCase();
+  const topicEval = evaluateCandidateTopic(vt, coreTokens, rawQuery);
+
   let score = 0;
 
+  // Topic relevance is the #1 priority so searches for "gfx" or "3D" never rank generic Jedag Jedug higher
+  if (coreTokens.length > 0) {
+    if (topicEval.matchedCount === coreTokens.length) {
+      score += 140;
+    } else if (topicEval.matchedCount > 0) {
+      score += 85 * topicEval.ratio;
+    } else {
+      score -= 180;
+    }
+    if (topicEval.isOffTopicJj) {
+      score -= 300;
+    }
+  }
+
   if (/alight\.link|alightcreative\.com|drive\.google\.com|mediafire\.com|sfile\.mobi|linktr\.ee|lynk\.id|heylink\.me/i.test(text)) {
-    score += 55;
+    score += 65;
   }
-  if (/\b(5mb|xml|preset|am|link|bio|komen|komentar|pin)\b/i.test(text)) {
-    score += 25;
+  if (/\b(5mb|xml|preset|pereset|am|link|bio|komen|komentar|pin)\b/i.test(text)) {
+    score += 28;
   }
-  if ((vt.comments ?? 0) >= 5) {
-    score += 12;
+  if ((vt.comments ?? 0) >= 3) {
+    score += 14;
   }
   if (recentlyUsedVideos.has(vt.id)) {
     score -= 40;
   }
-  score += Math.random() * 14;
+  score += Math.random() * 10;
   return score;
 }
+
+const proxiedUrl = (u: string | null | undefined) => (u && /^https?:\/\//i.test(u) ? mediaLink(u) : u ?? null);
 
 async function searchViaGoService(keyword: string, count: number): Promise<RawCandidateVT[]> {
   const { goServiceUrl, goServiceSecret, goTimeoutMs } = settings.downloader;
@@ -227,23 +373,49 @@ async function searchViaGoService(keyword: string, count: number): Promise<RawCa
               ? v.duration
               : parseInt(String(v.duration ?? "0"), 10) || null;
 
+        const createdAt =
+          typeof v.created_at === "number" && v.created_at > 0
+            ? v.created_at
+            : typeof v.createTime === "number" && v.createTime > 0
+              ? v.createTime
+              : null;
+
+        const followers =
+          typeof v.author?.stats?.follower_count === "number"
+            ? v.author.stats.follower_count
+            : typeof v.author?.followers === "number"
+              ? v.author.followers
+              : null;
+
         return {
           id,
           url,
           kind,
           description: String(v.description ?? v.title ?? ""),
-          cover: v.cover || v.dynamic_cover || null,
+          snippet: typeof v.snippet === "string" ? v.snippet : undefined,
+          cover: v.cover || v.dynamic_cover || images[0] || null,
           playUrl,
           images,
           duration,
+          createdAt,
+          region: typeof v.region === "string" && v.region ? v.region : null,
           views: typeof v.stats?.plays === "number" ? v.stats.plays : typeof v.stats?.views === "number" ? v.stats.views : null,
           likes: typeof v.stats?.likes === "number" ? v.stats.likes : typeof v.stats?.like === "number" ? v.stats.like : null,
           comments:
             typeof v.stats?.comments === "number" ? v.stats.comments : typeof v.stats?.comment === "number" ? v.stats.comment : null,
+          shares:
+            typeof v.stats?.shares === "number" ? v.stats.shares : typeof v.stats?.share === "number" ? v.stats.share : null,
+          music: v.music?.title
+            ? {
+                title: String(v.music.title),
+                author: String(v.music.author ?? ""),
+              }
+            : null,
           author: {
             username: username || "tiktoker",
             nickname: String(v.author?.nickname ?? username),
             avatar: v.author?.avatar || v.author?.avatar_larger || null,
+            followers,
             signature: typeof v.author?.signature === "string" ? v.author.signature : undefined,
             bioLink: typeof v.author?.bio_link === "string" ? v.author.bio_link : undefined,
           },
@@ -257,16 +429,18 @@ async function searchViaGoService(keyword: string, count: number): Promise<RawCa
 
 async function searchViaWebIndexFallback(keyword: string, count: number): Promise<RawCandidateVT[]> {
   try {
-    const q = encodeURIComponent(`site:tiktok.com ${keyword}`);
+    const cleanQ = keyword.toLowerCase().startsWith("tiktok.com ") ? keyword : `tiktok.com ${keyword}`;
+    const q = encodeURIComponent(cleanQ);
     const res = await fetch(`https://html.duckduckgo.com/html/?q=${q}`, {
       headers: {
-        "User-Agent": DESKTOP_UA,
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8",
       },
       signal: AbortSignal.timeout(12_000),
     });
-    if (!res.ok) return [];
+    if (res.status !== 200) return [];
     const rawHtml = await res.text();
     let decoded = rawHtml;
     try {
@@ -316,17 +490,27 @@ async function searchViaWebIndexFallback(keyword: string, count: number): Promis
               url: item.url,
               kind: images.length > 0 ? "photo" : item.kind,
               description: String(struct.desc ?? ""),
-              cover: struct.video?.cover ?? struct.video?.originCover ?? null,
+              cover: struct.video?.cover ?? struct.video?.originCover ?? images[0] ?? null,
               playUrl: struct.video?.playAddr ?? struct.video?.downloadAddr ?? null,
               images,
               duration: Number(struct.video?.duration) || null,
+              createdAt: Number(struct.createTime) || null,
+              region: struct.locationCreated || null,
               views: Number(struct.stats?.playCount) || null,
               likes: Number(struct.stats?.diggCount) || null,
               comments: Number(struct.stats?.commentCount) || null,
+              shares: Number(struct.stats?.shareCount) || null,
+              music: struct.music?.title
+                ? {
+                    title: String(struct.music.title),
+                    author: String(struct.music.authorName ?? ""),
+                  }
+                : null,
               author: {
                 username: String(struct.author?.uniqueId || item.username),
                 nickname: String(struct.author?.nickname || item.username),
                 avatar: struct.author?.avatarThumb ?? null,
+                followers: Number(struct.authorStats?.followerCount) || null,
                 signature: struct.author?.signature ?? undefined,
                 bioLink: struct.author?.bioLink?.link ?? undefined,
               },
@@ -345,13 +529,18 @@ async function searchViaWebIndexFallback(keyword: string, count: number): Promis
         playUrl: null,
         images: [],
         duration: null,
+        createdAt: null,
+        region: null,
         views: null,
         likes: null,
         comments: null,
+        shares: null,
+        music: null,
         author: {
           username: item.username,
           nickname: item.username,
           avatar: null,
+          followers: null,
         },
       };
     });
@@ -396,6 +585,9 @@ async function extractPresetsFromCandidate(
   const add = makeAdder(found, seen);
 
   extractLinks(vt.description).forEach((u) => add(u, "description"));
+  if (vt.snippet) {
+    extractLinks(vt.snippet).forEach((u) => add(u, "description"));
+  }
   if (vt.author.signature) {
     extractLinks(vt.author.signature).forEach((u) => add(u, "bio"));
   }
@@ -403,12 +595,17 @@ async function extractPresetsFromCandidate(
     add(vt.author.bioLink, "bioLink");
   }
 
+  const needProfile = vt.author.signature === undefined && !vt.author.bioLink;
   const [profile, comments] = await Promise.all([
-    getCachedProfile(vt.author.username),
+    needProfile
+      ? getCachedProfile(vt.author.username)
+      : Promise.resolve({ bio: "", avatar: null, bioLink: null, links: [] as string[] }),
     getComments(vt.id, vt.author.username, 2),
   ]);
 
-  extractLinks(profile.bio).forEach((u) => add(u, "bio"));
+  if (profile.bio) {
+    extractLinks(profile.bio).forEach((u) => add(u, "bio"));
+  }
   profile.links.forEach((u) => add(u, "bioLink"));
 
   for (const c of comments) {
@@ -422,16 +619,31 @@ async function extractPresetsFromCandidate(
     );
   }
 
-  const hasDirectAm = () => found.some((x) => isAm(x.url) || isFile(x.url));
-  if (!hasDirectAm()) {
+  // Also stitch split /u/<uid> + /p/<pid> or Drive links posted across multiple comments in the same thread
+  if (comments.length > 1) {
+    const combinedCommentText = comments.map((c) => c.text).join("\n");
+    extractLinks(combinedCommentText).forEach((u) =>
+      add(u, "comment", {
+        byAuthor: comments.some((c) => c.byAuthor),
+        pinned: comments.some((c) => c.pinned),
+        digg: Math.max(0, ...comments.map((c) => c.digg)),
+        detail: `@${vt.author.username}`,
+      }),
+    );
+  }
+
+  // Scan comment replies if either 5MB or XML is still missing so we capture BOTH 5MB and XML presets
+  const hasBoth5mbAndXml = () => found.some((x) => isAm(x.url)) && found.some((x) => isFile(x.url));
+  if (!hasBoth5mbAndXml()) {
     const parents = comments
       .filter((c) => c.cid && c.replyCount > 0)
-      .sort((a, b) => Number(b.byAuthor) - Number(a.byAuthor) || Number(b.pinned) - Number(a.pinned) || b.digg - a.digg)
+      .sort((a, b) => scoreReplyParent(b) - scoreReplyParent(a))
       .slice(0, 4);
 
     if (parents.length > 0) {
-      const replyBatches = await mapLimit(parents, 2, (p) => getReplies(vt.id, p.cid));
-      for (const reply of replyBatches.flat()) {
+      const replyBatches = await mapLimit(parents, 4, (p) => getReplies(vt.id, p.cid));
+      const allReplies = replyBatches.flat();
+      for (const reply of allReplies) {
         extractLinks(reply.text).forEach((u) =>
           add(u, "comment", {
             byAuthor: !!vt.author.username && reply.user === vt.author.username,
@@ -440,43 +652,54 @@ async function extractPresetsFromCandidate(
           }),
         );
       }
+      if (allReplies.length > 0) {
+        const combinedThread = [...comments.map((c) => c.text), ...allReplies.map((r) => r.text)].join("\n");
+        extractLinks(combinedThread).forEach((u) =>
+          add(u, "comment", {
+            byAuthor: true,
+            digg: 10,
+            detail: `@${vt.author.username} (balasan)`,
+          }),
+        );
+      }
     }
   }
 
-  let presets = await finishFound(found, seen);
-
-  if (presets.length === 0) {
-    try {
-      const fb = await Promise.race([
-        runBintang(vt.url),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 9000)),
-      ]);
-      if (fb.presets.length > 0) presets = fb.presets;
-    } catch {
-      // Ignore fallback timeout during batch scan
-    }
-  }
-
-  const vFields = videoFields(vt.playUrl ? { url: vt.playUrl, from: "go" } : null);
   const proxiedImages = vt.images.map((img) => mediaLink(img));
+  const proxiedCover = proxiedUrl(vt.cover) ?? proxiedImages[0] ?? null;
+
+  const presets = await finishFound(found, seen, proxiedCover);
+
+  let effectivePlayUrl = vt.playUrl;
+  if (presets.length > 0 && vt.kind === "video" && (!effectivePlayUrl || isSignedWebappUrl(effectivePlayUrl))) {
+    const tikwmStream = await fromTikwm(vt.author.username, vt.id);
+    if (tikwmStream) effectivePlayUrl = tikwmStream;
+  }
+
+  const vFields = videoFields(effectivePlayUrl ? { url: effectivePlayUrl, from: "go" } : null);
 
   const origin: PresetOriginVideo = {
     id: vt.id,
     url: vt.url,
     kind: vt.kind,
     description: vt.description,
-    cover: vt.cover,
+    cover: proxiedCover,
     src: vFields.src,
     proxy: vFields.proxy,
     images: proxiedImages,
     duration: vt.duration,
+    createdAt: vt.createdAt,
+    region: vt.region,
     views: vt.views,
     likes: vt.likes,
     comments: vt.comments ?? comments.length,
+    shares: vt.shares,
+    music: vt.music,
     author: {
       username: vt.author.username,
       nickname: vt.author.nickname,
-      avatar: vt.author.avatar ?? profile.avatar,
+      avatar: proxiedUrl(vt.author.avatar ?? profile.avatar),
+      followers: vt.author.followers,
     },
   };
 
@@ -493,6 +716,7 @@ export async function searchPresetsByKeyword(
 ): Promise<KeywordPresetSearchResult> {
   const query = rawQuery.trim();
   const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ");
+  const coreTokens = extractCoreTokens(query);
   const history = getQueryHistory(normalizedQuery);
 
   const variation =
@@ -509,62 +733,66 @@ export async function searchPresetsByKeyword(
   const candidateMap = new Map<string, RawCandidateVT>();
   const effectiveQueries: string[] = [];
 
-  const initialPlans = searchPlans.slice(0, 2);
-  const initialBatches = await Promise.all(
-    initialPlans.map(async (plan) => {
-      effectiveQueries.push(plan.keyword);
-      return fetchCandidateBatch(plan.keyword);
-    }),
-  );
-
-  for (const batch of initialBatches) {
+  for (let i = 0; i < Math.min(2, searchPlans.length); i++) {
+    const plan = searchPlans[i]!;
+    effectiveQueries.push(plan.keyword);
+    const batch = await fetchCandidateBatch(plan.keyword);
     for (const vt of batch) {
+      const topicEval = evaluateCandidateTopic(vt, coreTokens, query);
+      // Drop pure Jedag Jedug / meme videos when the user searched for a different topic like GFX or 3D
+      if (topicEval.isOffTopicJj) continue;
       if (!candidateMap.has(vt.id)) candidateMap.set(vt.id, vt);
     }
-  }
-
-  if (candidateMap.size < 14 && searchPlans.length > 2) {
-    const extraPlan = searchPlans[2]!;
-    effectiveQueries.push(extraPlan.keyword);
-    const extraBatch = await fetchCandidateBatch(extraPlan.keyword);
-    for (const vt of extraBatch) {
-      if (!candidateMap.has(vt.id)) candidateMap.set(vt.id, vt);
-    }
+    const matchingCount = [...candidateMap.values()].filter(
+      (vt) => evaluateCandidateTopic(vt, coreTokens, query).matchedCount > 0,
+    ).length;
+    if (matchingCount >= 14) break;
   }
 
   const candidates = [...candidateMap.values()].sort(
-    (a, b) => scoreCandidate(b, recentlyUsedVideos) - scoreCandidate(a, recentlyUsedVideos),
+    (a, b) =>
+      scoreCandidate(b, coreTokens, query, recentlyUsedVideos) -
+      scoreCandidate(a, coreTokens, query, recentlyUsedVideos),
   );
 
-  const discoveredPresets: DiscoveredPreset[] = [];
-  const videoGroups: KeywordPresetVideoGroup[] = [];
+  const discoveredPresets: Array<DiscoveredPreset & { _topicScore: number }> = [];
+  const videoGroups: Array<KeywordPresetVideoGroup & { _topicScore: number }> = [];
   const seenPresetUrls = new Set<string>();
   const scannedVideoIds = new Set<string>();
 
   const deadline = Date.now() + 45_000;
   let cursorIdx = 0;
-  let extraPlanIdx = 3;
+  let extraPlanIdx = 2;
 
   while (discoveredPresets.length < targetMin && Date.now() < deadline) {
-    const remainingCandidates = candidates.slice(cursorIdx, cursorIdx + 6);
+    const remainingCandidates = candidates.slice(cursorIdx, cursorIdx + 7);
     if (remainingCandidates.length === 0) {
-      if (extraPlanIdx < searchPlans.length) {
+      let addedNew = false;
+      while (extraPlanIdx < searchPlans.length && Date.now() < deadline) {
         const nextPlan = searchPlans[extraPlanIdx++]!;
         effectiveQueries.push(nextPlan.keyword);
         const more = await fetchCandidateBatch(nextPlan.keyword);
-        const freshCandidates = more.filter((vt) => !candidateMap.has(vt.id));
+        const freshCandidates = more.filter((vt) => {
+          if (candidateMap.has(vt.id)) return false;
+          const topicEval = evaluateCandidateTopic(vt, coreTokens, query);
+          return !topicEval.isOffTopicJj;
+        });
         for (const vt of freshCandidates) {
           candidateMap.set(vt.id, vt);
         }
         if (freshCandidates.length > 0) {
           candidates.push(
             ...freshCandidates.sort(
-              (a, b) => scoreCandidate(b, recentlyUsedVideos) - scoreCandidate(a, recentlyUsedVideos),
+              (a, b) =>
+                scoreCandidate(b, coreTokens, query, recentlyUsedVideos) -
+                scoreCandidate(a, coreTokens, query, recentlyUsedVideos),
             ),
           );
-          continue;
+          addedNew = true;
+          break;
         }
       }
+      if (addedNew) continue;
       break;
     }
 
@@ -573,20 +801,34 @@ export async function searchPresetsByKeyword(
       scannedVideoIds.add(vt.id);
     }
 
-    const batchResults = await mapLimit(remainingCandidates, 5, (vt) => extractPresetsFromCandidate(vt));
+    const batchResults = await mapLimit(remainingCandidates, 6, async (vt) => ({
+      rawVt: vt,
+      ...(await extractPresetsFromCandidate(vt)),
+    }));
 
     for (const item of batchResults) {
       if (item.presets.length === 0) continue;
 
+      const postEval = evaluateCandidateTopic(item.rawVt, coreTokens, query, item.presets);
+      if (postEval.isOffTopicJj) continue;
+
+      // If user searched a specific topic (e.g. "gfx", "3d"), require at least 1 core token match
+      // in either the VT description/hashtags/author/snippet or the extracted preset title!
+      if (coreTokens.length > 0 && postEval.matchedCount === 0) {
+        continue;
+      }
+
       const freshForThisVideo: Preset[] = [];
       for (const p of item.presets) {
-        if (seenPresetUrls.has(p.url)) continue;
-        seenPresetUrls.add(p.url);
+        const normUrl = p.url.replace(/\?source=link$/i, "");
+        if (seenPresetUrls.has(normUrl)) continue;
+        seenPresetUrls.add(normUrl);
         freshForThisVideo.push(p);
         discoveredPresets.push({
           ...p,
           id: `${item.origin.id}-${discoveredPresets.length + 1}`,
           vt: item.origin,
+          _topicScore: postEval.matchedCount,
         });
       }
 
@@ -595,25 +837,35 @@ export async function searchPresetsByKeyword(
           vt: item.origin,
           presets: freshForThisVideo,
           scannedComments: item.scannedComments,
+          _topicScore: postEval.matchedCount,
         });
       }
     }
 
-    if (scannedVideoIds.size >= 22) break;
+    if (scannedVideoIds.size >= 24) break;
   }
 
   discoveredPresets.sort((a, b) => {
+    if (b._topicScore !== a._topicScore) return b._topicScore - a._topicScore;
     const aRecent = recentlyUsedPresets.has(a.url) ? 1 : 0;
     const bRecent = recentlyUsedPresets.has(b.url) ? 1 : 0;
     if (aRecent !== bRecent) return aRecent - bRecent;
-    if (a.type !== b.type) return a.type === "5mb" ? -1 : 1;
     return Number(b.byAuthor) - Number(a.byAuthor) || Number(b.pinned) - Number(a.pinned);
   });
 
+  videoGroups.sort((a, b) => b._topicScore - a._topicScore);
+
+  const cleanPresets: DiscoveredPreset[] = discoveredPresets.map(({ _topicScore, ...rest }, idx) => ({
+    ...rest,
+    id: `${rest.vt.id}-${idx + 1}`,
+  }));
+
+  const cleanVideos: KeywordPresetVideoGroup[] = videoGroups.map(({ _topicScore, ...rest }) => rest);
+
   recordQueryHistory(
     normalizedQuery,
-    videoGroups.map((g) => g.vt.id),
-    discoveredPresets.slice(0, 14).map((p) => p.url),
+    cleanVideos.map((g) => g.vt.id),
+    cleanPresets.slice(0, 14).map((p) => p.url),
   );
 
   return {
@@ -621,11 +873,11 @@ export async function searchPresetsByKeyword(
     effectiveQueries: [...new Set(effectiveQueries)],
     variation,
     targetMin,
-    totalPresets: discoveredPresets.length,
+    totalPresets: cleanPresets.length,
     totalVideosScanned: scannedVideoIds.size,
     totalCandidatesFound: candidateMap.size,
-    presets: discoveredPresets,
-    videos: videoGroups,
+    presets: cleanPresets,
+    videos: cleanVideos,
     timestamp: Date.now(),
   };
 }

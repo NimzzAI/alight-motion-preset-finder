@@ -1,6 +1,7 @@
 import { settings } from "../config/settings.server";
 import { UA, fetchText } from "./http.server";
 import { mediaLink } from "./sign.server";
+import { ensureGoServiceRunning } from "./tiktok-page.server";
 import { getVideoSrc, tikwmUrl } from "./video-src.server";
 import type { TikTokMedia } from "./types";
 
@@ -17,6 +18,7 @@ const nz = (v: unknown) => (typeof v === "number" ? v : null);
 async function fromGo(input: string): Promise<TikTokMedia | null> {
   const { goServiceUrl, goServiceSecret, goTimeoutMs } = settings.downloader;
   if (!goServiceUrl) return null;
+  await ensureGoServiceRunning();
 
   const res = await fetch(`${goServiceUrl}/extract`, {
     method: "POST",
@@ -39,8 +41,8 @@ async function fromGo(input: string): Promise<TikTokMedia | null> {
     id: d.id ?? null,
     type: d.type === "photo" ? "photo" : "video",
     title: d.title ?? "",
-    cover: d.cover || null,
-    url: username && d.id ? `https://www.tiktok.com/@${username}/video/${d.id}` : null,
+    cover: proxied(d.cover) || images[0] || null,
+    url: username && d.id ? `https://www.tiktok.com/@${username}/${d.type === "photo" ? "photo" : "video"}/${d.id}` : null,
     video: proxied(d.video),
     videoHd: null,
     duration: seconds(d.duration),
@@ -53,7 +55,7 @@ async function fromGo(input: string): Promise<TikTokMedia | null> {
     author: {
       username,
       nickname: d.author?.nickname ?? "",
-      avatar: d.author?.avatar || null,
+      avatar: proxied(d.author?.avatar),
       verified: !!d.author?.verified,
       followers: nz(d.author?.followers),
       likes: nz(d.author?.like),

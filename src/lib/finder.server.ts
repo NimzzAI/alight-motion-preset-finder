@@ -1,5 +1,5 @@
 import { settings } from "../config/settings.server";
-import { fetchText, hostIn, hostOf, http, mapLimit, sleep } from "./http.server";
+import { DESKTOP_UA, fetchText, hostIn, hostOf, http, mapLimit, sleep } from "./http.server";
 import {
   AM_SHARE_RE,
   NOISE_HOSTS,
@@ -10,8 +10,9 @@ import {
   isFile,
   isNoise,
 } from "./links.server";
+import { mediaLink } from "./sign.server";
 import { getVideoInfo, resolveTiktok } from "./tiktok-page.server";
-import { getVideoSrc, videoFields } from "./video-src.server";
+import { getVideoSrc, isSignedWebappUrl, videoFields } from "./video-src.server";
 import type { FindResult, Preset } from "./types";
 
 export type Found = {
@@ -46,14 +47,33 @@ type Reply = { text: string; user: string; digg: number };
 const REPLY_UA =
   "com.zhiliaoapp.musically/300000 (Linux; U; Android 13; id_ID; M2101K6G; Build/TKQ1.220829.002; Cronet/TTNetVersion:b4d74d55 2023-02-16 QuicVersion:41928d6a 2023-01-30)";
 
-async function resolveChain(url: string): Promise<string | null> {
+export function decodeHtmlEntities(input: string | null | undefined): string | null {
+  if (!input) return null;
+  return input
+    .replace(/&#(\d+);/g, (_, dec) => {
+      const code = Number.parseInt(dec, 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .trim();
+}
+
+export async function resolveChain(url: string): Promise<string | null> {
   let cur = url;
-  let amUrl = isAm(url) ? url : null;
+  let resolvedPresetUrl: string | null = isAm(url) || isFile(url) ? url : null;
 
   for (let i = 0; i < 8; i++) {
     let res: Response;
     try {
-      res = await http(cur, { redirect: "manual", timeout: 10000 });
+      res = await http(cur, { redirect: "manual", timeout: 10000, ua: DESKTOP_UA });
     } catch {
       break;
     }
@@ -61,25 +81,34 @@ async function resolveChain(url: string): Promise<string | null> {
     const loc = res.headers.get("location");
     if (!loc) break;
     if (loc.startsWith("intent://")) {
-      const m = decodeURIComponent(loc).match(/https?:\/\/alightcreative\.com\/am\/share\/[^\s"'<>;]+/i);
-      if (m) amUrl = m[0];
+      const dec = decodeURIComponent(loc);
+      const m =
+        dec.match(/https?:\/\/alightcreative\.com\/am\/share\/[^\s"'<>;]+/i) ??
+        dec.match(/[?&]url=(https?:\/\/[^\s"'<>&;]+)/i);
+      if (m) {
+        const extracted = clean(m[1] ?? m[0]);
+        if (isAm(extracted) || isFile(extracted)) resolvedPresetUrl = extracted;
+      }
       break;
     }
-    cur = new URL(loc, cur).href;
-    if (isAm(cur)) amUrl = cur;
-    if (AM_SHARE_RE.test(cur)) break;
+    try {
+      cur = new URL(loc, cur).href;
+    } catch {
+      break;
+    }
+    if (isAm(cur) || isFile(cur)) resolvedPresetUrl = cur;
+    if (AM_SHARE_RE.test(cur) || isFile(cur)) break;
   }
 
-  if (!amUrl) return null;
-  return AM_SHARE_RE.test(amUrl) ? amUrl : isAm(cur) ? cur : amUrl;
+  return resolvedPresetUrl;
 }
 
 export async function getProfile(user: string) {
   const empty = { bio: "", avatar: null as string | null, bioLink: null as string | null, links: [] as string[] };
   if (!user) return empty;
   try {
-    const { body } = await fetchText(`https://www.tiktok.com/@${user}`);
-    const m = body.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">([\s\S]*?)<\/script>/);
+    const { body } = await fetchText(`https://www.tiktok.com/@${user}`, { ua: DESKTOP_UA });
+    const m = body.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
     let u: any = {};
     try {
       u = JSON.parse(m?.[1] ?? "{}")?.__DEFAULT_SCOPE__?.["webapp.user-detail"]?.userInfo?.user ?? {};
@@ -91,7 +120,7 @@ export async function getProfile(user: string) {
     const links = extractLinks(body).filter((x) => !isNoise(x));
     return {
       bio: (u.signature as string) ?? "",
-      avatar: (u.avatarMedium as string) ?? null,
+      avatar: (u.avatarMedium as string) ?? (u.avatarThumb as string) ?? null,
       bioLink,
       links: [...new Set([...(bioLink ? [bioLink] : []), ...links])],
     };
@@ -134,7 +163,7 @@ export async function getComments(videoId: string, author: string, maxPages = se
       }
       if (!j.has_more || !list.length) break;
       cursor = j.cursor ?? cursor + 50;
-      await sleep(250);
+      await sleep(200);
     } catch {
       break;
     }
@@ -165,7 +194,7 @@ export async function getReplies(videoId: string, cid: string): Promise<Reply[]>
   });
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await sleep(400);
+    if (attempt) await sleep(350);
     try {
       const res = await http(`https://api16.tiktokv.com/aweme/v1/comment/list/reply/?${q}`, {
         accept: "application/json",
@@ -186,9 +215,23 @@ export async function getReplies(videoId: string, cid: string): Promise<Reply[]>
   return [];
 }
 
-async function getShareInfo(url: string): Promise<{ title: string | null; thumb: string | null }> {
+async function getShareInfo(
+  url: string,
+): Promise<{ resolvedUrl: string; title: string | null; thumb: string | null; dead?: boolean }> {
+  let targetUrl = url;
+  if (!AM_SHARE_RE.test(targetUrl)) {
+    const resolved = await resolveChain(targetUrl);
+    if (resolved && isAm(resolved)) targetUrl = resolved;
+  }
+
   try {
-    const { body } = await fetchText(url);
+    const { status, body, finalUrl } = await fetchText(targetUrl, { ua: DESKTOP_UA, timeout: 10000 });
+    if (finalUrl && AM_SHARE_RE.test(finalUrl)) {
+      targetUrl = finalUrl;
+    }
+    if (status === 404 || status === 410) {
+      return { resolvedUrl: targetUrl, title: null, thumb: null, dead: true };
+    }
     const t = body.match(/<title>([\s\S]*?)<\/title>/i);
     const thumbs = [
       ...new Set(
@@ -198,12 +241,22 @@ async function getShareInfo(url: string): Promise<{ title: string | null; thumb:
       ),
     ];
     thumbs.sort((a, b) => (/thumb-med/i.test(a) ? 0 : 1) - (/thumb-med/i.test(b) ? 0 : 1));
+    const rawTitle = t
+      ? decodeHtmlEntities((t[1] as string).replace(/\s+/g, " ").trim().replace(/ - Alight Motion Project$/i, ""))
+      : null;
+    if (rawTitle && /^(page not found|404|not found|error)/i.test(rawTitle)) {
+      return { resolvedUrl: targetUrl, title: null, thumb: null, dead: true };
+    }
+    const validTitle = rawTitle && !/^alight motion$/i.test(rawTitle) ? rawTitle : null;
+    const isDeadAmShare = AM_SHARE_RE.test(targetUrl) && !validTitle && thumbs.length === 0;
     return {
-      title: t ? (t[1] as string).replace(/\s+/g, " ").trim().replace(/ - Alight Motion Project$/i, "") : null,
+      resolvedUrl: targetUrl,
+      title: validTitle,
       thumb: thumbs[0] ?? null,
+      dead: isDeadAmShare,
     };
   } catch {
-    return { title: null, thumb: null };
+    return { resolvedUrl: targetUrl, title: null, thumb: null };
   }
 }
 
@@ -218,23 +271,29 @@ function humanSize(bytes: number): string | null {
   return i ? `${bytes.toFixed(1)} ${units[i]}` : `${bytes} B`;
 }
 
-async function getFileInfo(url: string): Promise<{ title?: string | null; size?: string | null }> {
-  const id = url.match(/\/file\/d\/([\w-]{10,})/)?.[1];
-  const out: { title?: string | null; size?: string | null } = {};
+async function getFileInfo(url: string): Promise<{ title?: string | null; size?: string | null; dead?: boolean }> {
+  const id = url.match(/\/file\/d\/([\w-]{10,})/)?.[1] ?? url.match(/[?&]id=([\w-]{10,})/)?.[1];
+  const out: { title?: string | null; size?: string | null; dead?: boolean } = {};
 
   if (id) {
     try {
       const res = await http(`https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t`, {
         accept: "*/*",
-        timeout: 20000,
+        timeout: 12000,
         referer: "https://drive.google.com/",
+        ua: DESKTOP_UA,
       });
+      if (res.status === 404) {
+        out.dead = true;
+        return out;
+      }
       if (res.ok && !(res.headers.get("content-type") ?? "").includes("text/html")) {
         const len = Number(res.headers.get("content-length") ?? 0);
         out.size = humanSize(len);
         if (len <= 8 * 1024 * 1024) {
           const head = Buffer.from(await res.arrayBuffer()).subarray(0, 8192).toString("utf8");
-          out.title = head.match(/<scene[^>]*\stitle="([^"]*)"/)?.[1] ?? null;
+          const rawXmlTitle = head.match(/<scene[^>]*\stitle="([^"]*)"/)?.[1] ?? null;
+          out.title = decodeHtmlEntities(rawXmlTitle);
         } else {
           await res.body?.cancel();
         }
@@ -246,14 +305,22 @@ async function getFileInfo(url: string): Promise<{ title?: string | null; size?:
 
   if (!out.title) {
     try {
-      const { body } = await fetchText(url, { timeout: 10000 });
+      const { body } = await fetchText(url, { ua: DESKTOP_UA, timeout: 8000 });
       const m = body.match(/<title>([\s\S]*?)<\/title>/i);
-      out.title = m
-        ? (m[1] as string)
-            .replace(/\s+/g, " ")
-            .trim()
-            .replace(/\s+-\s+(Google Drive|MediaFire|Dropbox|Mega)\s*$/i, "")
+      const raw = m
+        ? decodeHtmlEntities(
+            (m[1] as string)
+              .replace(/\s+/g, " ")
+              .trim()
+              .replace(/\s+-\s+(Google Drive|MediaFire|Dropbox|Mega)\s*$/i, ""),
+          )
         : null;
+      if (raw && /^(page not found|404|file not found|error 404)/i.test(raw)) {
+        out.dead = true;
+        out.title = null;
+      } else {
+        out.title = raw && !/^(google drive|error|sign in|404|page not found)/i.test(raw) ? raw : null;
+      }
     } catch {
       out.title = null;
     }
@@ -264,7 +331,7 @@ async function getFileInfo(url: string): Promise<{ title?: string | null; size?:
 
 async function harvestTree(url: string): Promise<string[]> {
   try {
-    const { body } = await fetchText(url);
+    const { body } = await fetchText(url, { ua: DESKTOP_UA, timeout: 10000 });
     const host = hostOf(url);
     return extractLinks(body).filter((u) => u !== url && !isNoise(u) && hostOf(u) && !hostOf(u).endsWith(host));
   } catch {
@@ -287,10 +354,37 @@ const trust = (p: Item) =>
             ? 70
             : 20 + Math.min(p.digg, 50) / 5;
 
+export function scoreReplyParent(c: Comment): number {
+  let score = 0;
+  if (c.byAuthor) score += 1000;
+  if (c.pinned) score += 800;
+  if (/\b(preset|pleset|5mb|xml|link|drive|am|alight|bawah|bagi|minta|mana)\b|👇|⬇️/i.test(c.text)) {
+    score += 500;
+  }
+  score += Math.min(c.digg, 200);
+  return score;
+}
+
 export function makeAdder(found: Found[], seen: Set<string>) {
   return (raw: string, kind: string, x: Partial<Found> = {}) => {
     const url = clean(raw);
-    if (!url || seen.has(url) || (isNoise(url) && !isAm(url) && !isFile(url))) return;
+    if (!url || (isNoise(url) && !isAm(url) && !isFile(url))) return;
+    if (seen.has(url)) {
+      const existing = found.find((item) => item.url === url);
+      if (existing) {
+        if (x.byAuthor && !existing.byAuthor) {
+          existing.byAuthor = true;
+          if (x.detail) existing.detail = x.detail;
+        }
+        if (x.pinned && !existing.pinned) {
+          existing.pinned = true;
+        }
+        if ((x.digg ?? 0) > existing.digg) {
+          existing.digg = x.digg ?? existing.digg;
+        }
+      }
+      return;
+    }
     seen.add(url);
     found.push({
       url,
@@ -303,49 +397,68 @@ export function makeAdder(found: Found[], seen: Set<string>) {
   };
 }
 
-export async function finishFound(found: Found[], seen: Set<string>): Promise<Preset[]> {
+export async function finishFound(found: Found[], seen: Set<string>, fallbackThumb: string | null = null): Promise<Preset[]> {
   const add = makeAdder(found, seen);
-  const hasAm = () => found.some((x) => isAm(x.url));
 
-  if (!hasAm()) {
-    const trees = found.filter((x) => hostIn(x.url, TREE_HOSTS)).map((x) => x.url);
-    if (trees.length) {
-      (await mapLimit(trees, 4, harvestTree)).flat().slice(0, 40).forEach((u) => add(u, "bioLink"));
-    }
+  // Harvest bio link trees so we capture both 5MB and XML links inside Linktree/Lynk.id/Heylink/s.id
+  const trees = found.filter((x) => hostIn(x.url, TREE_HOSTS)).map((x) => x.url);
+  if (trees.length) {
+    (await mapLimit(trees.slice(0, 4), 4, harvestTree)).flat().slice(0, 40).forEach((u) => add(u, "bioLink"));
   }
 
+  // Resolve shortlinks to either 5MB (Alight Motion) or XML (Google Drive / MediaFire / etc.)
   const targets = found.filter((x) => !isAm(x.url) && !isFile(x.url) && !hostIn(x.url, NOISE_HOSTS)).slice(0, 15);
-  const resolved = await mapLimit(targets, 5, async (x) => ({ x, amUrl: await resolveChain(x.url) }));
+  const resolved = await mapLimit(targets, 5, async (x) => ({ x, presetUrl: await resolveChain(x.url) }));
   for (const r of resolved) {
-    if (r.amUrl && !seen.has(r.amUrl)) {
-      seen.add(r.amUrl);
-      found.push({ ...r.x, url: r.amUrl, origin: r.x.url });
+    if (r.presetUrl && !seen.has(r.presetUrl)) {
+      seen.add(r.presetUrl);
+      found.push({ ...r.x, url: r.presetUrl, origin: r.x.url });
     }
   }
 
-  const items: Item[] = found
+  const items: (Item & { dead?: boolean })[] = found
     .filter((x) => isAm(x.url) || isFile(x.url))
     .map((x) => ({ ...x, type: isAm(x.url) ? "5mb" : "xml" }));
 
-  await mapLimit(items, 4, async (p) => {
+  await mapLimit(items, 5, async (p) => {
     if (p.type === "5mb") {
       const s = await getShareInfo(p.url);
+      p.url = s.resolvedUrl || p.url;
       p.title = s.title;
       p.thumb = s.thumb;
+      p.dead = s.dead;
     } else {
       Object.assign(p, await getFileInfo(p.url));
     }
   });
 
+  // Deduplicate in case an alight.link shortlink resolved to the same canonical alightcreative.com URL
+  const uniqueItems: Item[] = [];
+  const finalSeenUrls = new Set<string>();
   for (const p of items) {
-    if (!isDefaultTitle(p.title)) continue;
-    const twin = items.find((o) => o !== p && o.detail && o.detail === p.detail && o.title && !isDefaultTitle(o.title));
-    if (twin) p.title = twin.title;
+    if (p.dead) continue;
+    const normUrl = p.url.replace(/\?source=link$/i, "");
+    if (finalSeenUrls.has(normUrl)) continue;
+    finalSeenUrls.add(normUrl);
+    uniqueItems.push(p);
   }
 
-  items.sort((a, b) => trust(b) - trust(a) || (a.type === b.type ? 0 : a.type === "5mb" ? -1 : 1));
+  for (const p of uniqueItems) {
+    if (!p.title || isDefaultTitle(p.title)) {
+      const twin = uniqueItems.find(
+        (o) => o !== p && o.title && !isDefaultTitle(o.title) && (o.detail === p.detail || o.byAuthor === p.byAuthor),
+      );
+      if (twin && !p.title) p.title = twin.title;
+    }
+    if (!p.thumb) {
+      const thumbTwin = uniqueItems.find((o) => o !== p && o.thumb);
+      p.thumb = thumbTwin?.thumb ?? fallbackThumb ?? null;
+    }
+  }
 
-  return items.map((p) => ({
+  uniqueItems.sort((a, b) => trust(b) - trust(a) || (a.type === b.type ? 0 : a.type === "5mb" ? -1 : 1));
+
+  return uniqueItems.map((p) => ({
     type: p.type,
     url: p.url,
     title: p.title ?? null,
@@ -358,21 +471,27 @@ export async function finishFound(found: Found[], seen: Set<string>): Promise<Pr
   }));
 }
 
+const proxiedMedia = (u: string | null | undefined) => (u && /^https?:\/\//i.test(u) ? mediaLink(u) : u ?? null);
+
 async function scan(input: string): Promise<FindResult> {
-  const { videoId, user: urlUser } = await resolveTiktok(input);
-  const info = await getVideoInfo(videoId);
+  const { videoId, user: urlUser, kind: urlKind } = await resolveTiktok(input);
+  const info = await getVideoInfo(videoId, urlUser);
   const user = info.user || urlUser;
-  const canon = user ? `https://www.tiktok.com/@${user}/video/${videoId}` : input;
+  const kind = info.kind ?? urlKind;
+  const canon = user ? `https://www.tiktok.com/@${user}/${kind === "photo" ? "photo" : "video"}/${videoId}` : input;
 
   const [profile, comments, videoSrc] = await Promise.all([
     getProfile(user),
     getComments(videoId, user),
-    getVideoSrc(canon, user, videoId, info.src ?? null),
+    info.src && !isSignedWebappUrl(info.src)
+      ? Promise.resolve({ url: info.src, from: "go" })
+      : getVideoSrc(canon, user, videoId, info.src ?? null),
   ]);
 
   const found: Found[] = [];
   const seen = new Set<string>();
   const hasAm = () => found.some((x) => isAm(x.url));
+  const hasXml = () => found.some((x) => isFile(x.url));
   const add = makeAdder(found, seen);
 
   extractLinks(info.description).forEach((u) => add(u, "description"));
@@ -384,26 +503,55 @@ async function scan(input: string): Promise<FindResult> {
     );
   }
 
+  // Stitch split links posted across multiple comments in the same thread
+  if (comments.length > 1) {
+    const combinedComments = comments.map((c) => c.text).join("\n");
+    extractLinks(combinedComments).forEach((u) =>
+      add(u, "comment", {
+        pinned: comments.some((c) => c.pinned),
+        byAuthor: comments.some((c) => c.byAuthor),
+        digg: Math.max(0, ...comments.map((c) => c.digg)),
+        detail: user ? `@${user}` : null,
+      }),
+    );
+  }
+
+  // Scan comment replies if either 5MB or XML is still missing
   let replyCount = 0;
-  if (!hasAm()) {
+  if (!hasAm() || !hasXml()) {
     const parents = comments
       .filter((c) => c.cid && c.replyCount > 0)
-      .sort((a, b) => Number(b.byAuthor) - Number(a.byAuthor) || Number(b.pinned) - Number(a.pinned) || b.digg - a.digg)
+      .sort((a, b) => scoreReplyParent(b) - scoreReplyParent(a))
       .slice(0, 12);
 
+    const allRepliesCollected: Reply[] = [];
     for (let i = 0; i < parents.length; i += 3) {
       const batch = await mapLimit(parents.slice(i, i + 3), 3, (p) => getReplies(videoId, p.cid));
       for (const c of batch.flat()) {
         replyCount++;
+        allRepliesCollected.push(c);
         extractLinks(c.text).forEach((u) =>
           add(u, "comment", { byAuthor: !!user && c.user === user, digg: c.digg, detail: `@${c.user} (balasan)` }),
         );
       }
-      if (hasAm() || (found.some((x) => isFile(x.url)) && i >= 6)) break;
+      if (hasAm() && hasXml()) break;
+    }
+
+    if (allRepliesCollected.length > 0) {
+      const combinedThread = [...comments.map((c) => c.text), ...allRepliesCollected.map((r) => r.text)].join("\n");
+      extractLinks(combinedThread).forEach((u) =>
+        add(u, "comment", {
+          byAuthor: true,
+          digg: 10,
+          detail: user ? `@${user} (balasan)` : "balasan",
+        }),
+      );
     }
   }
 
-  const presets = await finishFound(found, seen);
+  const proxiedImages = (info.images ?? []).map((img) => proxiedMedia(img)).filter((x): x is string => Boolean(x));
+  const proxiedCover = proxiedMedia(info.cover) ?? proxiedImages[0] ?? null;
+  const presets = await finishFound(found, seen, proxiedCover);
 
   return {
     engine: "finder",
@@ -412,22 +560,36 @@ async function scan(input: string): Promise<FindResult> {
       id: videoId,
       title: null,
       vertical: true,
-      kind: "video",
-      count: 0,
-      duration: null,
-      createdAt: null,
-      url: `https://www.tiktok.com/@${user}/video/${videoId}`,
+      kind: kind === "photo" || proxiedImages.length > 0 ? "image" : "video",
+      count: proxiedImages.length,
+      duration: info.duration ?? null,
+      createdAt: info.createdAt ?? null,
+      region: info.region ?? null,
+      url: user ? `https://www.tiktok.com/@${user}/${kind === "photo" ? "photo" : "video"}/${videoId}` : input,
       ...videoFields(videoSrc),
-      cover: info.cover ?? null,
+      cover: proxiedCover,
+      images: proxiedImages,
       description: info.description ?? "",
       views: info.views ?? null,
       likes: info.likes ?? null,
       comments: info.comments ?? comments.length,
+      shares: info.shares ?? null,
+      music: info.music
+        ? {
+            title: info.music.title,
+            author: info.music.author,
+            url: proxiedMedia(info.music.url),
+          }
+        : null,
     },
     author: {
       username: user,
       nickname: info.nickname ?? "",
-      avatar: info.avatar ?? profile.avatar,
+      avatar: proxiedMedia(info.avatar ?? profile.avatar),
+      followers: info.followers ?? null,
+      likes: info.authorLikes ?? null,
+      videos: info.authorVideos ?? null,
+      verified: info.verified ?? false,
     },
     scanned: { comments: comments.length, replies: replyCount },
     presets,
@@ -441,6 +603,7 @@ export async function runFinder(input: string): Promise<FindResult> {
   const hit = cache.get(input);
   if (hit && Date.now() - hit.at < TTL) {
     const { video, author } = hit.value;
+    if (video.src) return hit.value;
     const fresh = await getVideoSrc(video.url ?? input, author.username, video.id ?? "", null);
     return { ...hit.value, video: { ...video, ...videoFields(fresh) } };
   }
@@ -452,4 +615,3 @@ export async function runFinder(input: string): Promise<FindResult> {
   }
   return value;
 }
-

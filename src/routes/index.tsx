@@ -18,25 +18,28 @@ export const Route = createFileRoute("/")({
 });
 
 const FEATURED_KEYWORDS = [
-  "preset elitis",
-  "preset jj slowmo",
-  "preset velocity",
-  "preset 3d transisi",
-  "preset foto aesthetic",
+  { query: "preset gfx", label: "Preset GFX", desc: "Typography, poster & anime edit" },
+  { query: "preset 3d", label: "Preset 3D", desc: "Camera 3D, transisi & shape layer" },
+  { query: "preset elitis", label: "Preset Elitis", desc: "Transisi smooth & shake modern" },
+  { query: "preset velocity", label: "Preset Velocity", desc: "Time-remap & slowmo beat sync" },
+  { query: "preset jj slowmo", label: "Preset JJ Slowmo", desc: "Jedag jedug halus & color grade" },
+  { query: "preset body back", label: "Preset Body Back", desc: "Beat trend & transisi populer" },
+  { query: "preset foto aesthetic", label: "Foto Aesthetic", desc: "Color grading & lyrics overlay" },
+  { query: "preset transisi", label: "Preset Transisi", desc: "Slide, spin & zoom Alight Motion" },
 ];
 
 function Finder() {
   const finder = useLookup<FindResult>("/api/find");
   const media = useLookup<TikTokMedia>("/api/tiktok");
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalInitialQuery, setModalInitialQuery] = useState("preset elitis");
+  const [modalInitialQuery, setModalInitialQuery] = useState("preset gfx");
 
   const search = (url: string) => {
     finder.run(url);
     if (detectPlatform(url) === "tiktok") media.run(url);
   };
 
-  const openKeywordModal = (kw = "preset elitis") => {
+  const openKeywordModal = (kw = "preset gfx") => {
     setModalInitialQuery(kw);
     setModalOpen(true);
   };
@@ -56,78 +59,76 @@ function Finder() {
 
   return (
     <div className="page">
-      <div className="hero-header">
-        <p className="hero-kicker">Catatan &amp; Pencari Preset Alight Motion</p>
-        <h1>
-          Cari <span className="marker-line">preset Alight Motion</span> dari tautan video atau judul.
-        </h1>
-        <p className="lead">
-          Tempel tautan video TikTok, YouTube, atau Instagram—atau ketik langsung judul preset seperti{" "}
-          <span className="mono">preset elitis</span> untuk menelusuri video maupun foto TikTok dan mengumpulkan
-          minimal 10 preset unik secara otomatis.
-        </p>
-      </div>
+      <div className="studio-hero-grid">
+        <div className="studio-hero-main stagger-1">
+          <p className="hero-kicker">Alight Motion Preset &amp; Media Studio · 5MB &amp; XML</p>
+          <h1>
+            Ekstrak <span className="marker-line">preset Alight Motion</span> dari tautan VT atau cari lewat judul.
+          </h1>
+          <p className="lead">
+            Tempel tautan video TikTok, YouTube, atau Instagram untuk memindai preset{" "}
+            <span className="mono">5MB</span> &amp; <span className="mono">XML</span> beserta thumbnail VT dan
+            metadata lengkap—atau ketik topik seperti <span className="mono">preset gfx</span> dan{" "}
+            <span className="mono">preset 3d</span> untuk mengumpulkan minimal 10 preset yang relevan.
+          </p>
 
-      <section className="mode-launchpad" aria-labelledby="launchpad-heading">
-        <div className="notebook-strip" aria-hidden="true">
-          <span className="notebook-holes">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="notebook-caption">Eksplorasi Preset via Kata Kunci</span>
+          <UrlForm
+            onSubmit={search}
+            onKeywordSubmit={(kw) => openKeywordModal(kw)}
+            loading={finder.loading}
+            button="Pindai Preset & VT"
+            validate={isFinderInput}
+            invalid="Masukkan link TikTok, YouTube, atau Instagram—atau ketik judul preset (misal: preset gfx, preset 3d)."
+            label="Konsol Pencarian Tautan VT & Kata Kunci Preset"
+            placeholder="Tempel https://vt.tiktok.com/... atau ketik: preset gfx / preset 3d"
+          />
         </div>
-        <div className="mode-launchpad-inner">
-          <div className="mode-launchpad-head">
-            <div>
-              <h2 id="launchpad-heading" className="mode-launchpad-title">
-                Cari Preset Lewat Judul TikTok (Minimal 10 Preset)
-              </h2>
-              <p className="muted mode-launchpad-desc">
-                Belum punya link videonya? Ketik judul atau gaya preset yang kamu inginkan. Sistem akan mencari VT video
-                &amp; foto di TikTok, mengambil link VT-nya, lalu mengumpulkan minimal 10 preset berbeda setiap kali
-                dicari.
-              </p>
-            </div>
-            <button
-              type="button"
-              className="btn btn-sage"
-              onClick={() => openKeywordModal("preset elitis")}
-            >
-              Cari Lewat Judul (⌘K)
-            </button>
-          </div>
 
-          <div className="topic-bar">
-            <span className="topic-label">Coba cari langsung:</span>
-            <div className="topic-list">
-              {FEATURED_KEYWORDS.map((kw) => (
+        <aside className="mode-launchpad stagger-2" aria-labelledby="launchpad-heading">
+          <div className="notebook-strip">
+            <span className="notebook-caption">Katalog Pencarian Topik · Mesin Pencari Golang</span>
+            <span className="mono muted" style={{ fontSize: "0.75rem" }}>
+              Pintasan ⌘K
+            </span>
+          </div>
+          <div className="mode-launchpad-inner">
+            <div className="mode-launchpad-head">
+              <div>
+                <h2 id="launchpad-heading" className="mode-launchpad-title">
+                  Eksplorasi Katalog Preset per Kategori
+                </h2>
+                <p className="muted mode-launchpad-desc">
+                  Pilih kategori di bawah atau buka jendela eksplorasi untuk mencari VT TikTok yang sesuai topik,
+                  memvalidasi kecocokan kata kunci, dan mengekstrak tautan 5MB maupun XML secara langsung.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sage"
+                onClick={() => openKeywordModal("preset gfx")}
+              >
+                Buka Pencari Judul (⌘K)
+              </button>
+            </div>
+
+            <div className="topic-grid">
+              {FEATURED_KEYWORDS.map((item) => (
                 <button
-                  key={kw}
+                  key={item.query}
                   type="button"
-                  className="topic-btn"
-                  onClick={() => openKeywordModal(kw)}
+                  className="topic-card-btn"
+                  onClick={() => openKeywordModal(item.query)}
                 >
-                  {kw}
+                  <span className="topic-card-title">{item.label}</span>
+                  <span className="topic-card-sub">{item.desc}</span>
                 </button>
               ))}
             </div>
           </div>
-        </div>
-      </section>
+        </aside>
+      </div>
 
-      <UrlForm
-        onSubmit={search}
-        onKeywordSubmit={(kw) => openKeywordModal(kw)}
-        loading={finder.loading}
-        button="Cari preset"
-        validate={isFinderInput}
-        invalid="Masukkan link TikTok, YouTube, atau Instagram—atau ketik judul preset (misal: preset elitis)."
-        label="Tempel link video atau ketik judul preset"
-        placeholder="https://vt.tiktok.com/... atau ketik: preset elitis"
-      />
-
-      {finder.loading && <Status message="Memindai video dan komentar" elapsed={finder.elapsed} />}
+      {finder.loading && <Status message="Memindai video, komentar, dan tautan preset" elapsed={finder.elapsed} />}
       {finder.error && (
         <p className="error" role="alert">
           {finder.error}
@@ -153,26 +154,39 @@ function Finder() {
       )}
 
       {!finder.data && !finder.loading && !finder.error && (
-        <ol className="steps">
-          <li>
-            <span>
-              Tempel tautan video dari TikTok, YouTube, atau Instagram—atau tekan tombol{" "}
-              <strong>Cari Lewat Judul</strong> untuk mencari lewat kata kunci seperti{" "}
-              <span className="mono">preset elitis</span>.
-            </span>
-          </li>
-          <li>
-            <span>
-              Deskripsi video, bio profil, tautan di bio, komentar yang disematkan, hingga balasan komentar dipindai
-              otomatis sampai shortlink terbuka.
-            </span>
-          </li>
-          <li>
-            <span>
-              Buka preset 5MB atau XML langsung di Alight Motion, salin tautannya, atau unduh video tanpa watermark.
-            </span>
-          </li>
-        </ol>
+        <section className="studio-specs-section stagger-4" aria-label="Cara kerja ekstraksi preset">
+          <ol className="steps">
+            <li>
+              <div className="step-content">
+                <h3 className="step-title">Deteksi Tautan Video &amp; Filter Topik Presisi</h3>
+                <p className="muted">
+                  Tempel link VT TikTok, YouTube, atau Instagram untuk pemindaian langsung, atau ketik kata kunci
+                  spesifik seperti <span className="mono">preset gfx</span> dan <span className="mono">preset 3d</span>{" "}
+                  dengan pemfilteran relevansi ketat agar bebas dari hasil yang melenceng.
+                </p>
+              </div>
+            </li>
+            <li>
+              <div className="step-content">
+                <h3 className="step-title">Ekstraksi Multi-Jalur 5MB &amp; XML</h3>
+                <p className="muted">
+                  Memindai deskripsi video, bio kreator, tautan pohon bio (Linktree, Lynk.id, Heylink), komentar yang
+                  disematkan, hingga balasan komentar untuk menangkap paket <span className="mono">5MB</span>{" "}
+                  (Alight Motion) sekaligus file <span className="mono">XML</span> (Google Drive / MediaFire).
+                </p>
+              </div>
+            </li>
+            <li>
+              <div className="step-content">
+                <h3 className="step-title">Pratinjau VT, Thumbnail &amp; Metadata Lengkap</h3>
+                <p className="muted">
+                  Tampilkan pemutar video VT asal beserta thumbnail sampul, statistik tayangan, suka, komentar, audio
+                  musik latar, dan tombol unduh video tanpa watermark dalam satu tampilan terpadu.
+                </p>
+              </div>
+            </li>
+          </ol>
+        </section>
       )}
 
       <PresetSearchModal
@@ -184,3 +198,4 @@ function Finder() {
     </div>
   );
 }
+
