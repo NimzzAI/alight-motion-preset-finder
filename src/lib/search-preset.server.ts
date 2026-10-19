@@ -1,10 +1,13 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { settings } from "../config/settings.server";
 import { runBintang } from "./fallback.server";
 import { type Found, finishFound, getComments, getProfile, getReplies, makeAdder } from "./finder.server";
-import { DESKTOP_UA, mapLimit } from "./http.server";
+import { DESKTOP_UA, fetchText, mapLimit } from "./http.server";
 import { extractLinks, isAm, isFile } from "./links.server";
 import { mediaLink } from "./sign.server";
-import { tikwmUrl, videoFields } from "./video-src.server";
+import { videoFields } from "./video-src.server";
 import type {
   DiscoveredPreset,
   KeywordPresetSearchResult,
@@ -39,6 +42,7 @@ type RawCandidateVT = {
     nickname: string;
     avatar: string | null;
     signature?: string;
+    bioLink?: string;
   };
 };
 
@@ -50,6 +54,64 @@ type QueryHistory = {
 };
 
 const queryHistoryMap = new Map<string, QueryHistory>();
+
+let goProc: ChildProcess | null = null;
+let goStarting: Promise<boolean> | null = null;
+
+async function ensureGoServiceRunning(): Promise<boolean> {
+  const { goServiceUrl } = settings.downloader;
+  if (!goServiceUrl) return false;
+
+  try {
+    const health = await fetch(`${goServiceUrl}/health`, {
+      signal: AbortSignal.timeout(1200),
+    });
+    if (health.ok) return true;
+  } catch {
+    // Not listening yet, attempt to spawn local compiled Golang binary
+  }
+
+  if (goStarting) return goStarting;
+
+  goStarting = (async () => {
+    try {
+      const binCandidates = [
+        path.resolve(process.cwd(), "services/downloader-go/downloader-bin"),
+        "/app/applet/services/downloader-go/downloader-bin",
+      ];
+      const binPath = binCandidates.find((p) => fs.existsSync(p));
+      if (!binPath) return false;
+
+      if (!goProc || goProc.killed) {
+        goProc = spawn(binPath, [], {
+          env: { ...process.env, PORT: "8090" },
+          stdio: "ignore",
+          detached: true,
+        });
+        goProc.unref();
+      }
+
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        try {
+          const check = await fetch(`${goServiceUrl}/health`, {
+            signal: AbortSignal.timeout(800),
+          });
+          if (check.ok) return true;
+        } catch {
+          // Wait for startup
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    } finally {
+      goStarting = null;
+    }
+  })();
+
+  return goStarting;
+}
 
 function getQueryHistory(normalizedQuery: string): QueryHistory {
   const now = Date.now();
@@ -90,7 +152,6 @@ function buildSearchQueries(rawQuery: string, variationSeed: number): Array<{ ke
     { keyword: `${base} 5mb`, cursor: 12 },
     { keyword: `${base} xml`, cursor: 0 },
     { keyword: base, cursor: 0 },
-    { keyword: `${base} alight motion`, cursor: 15 },
     { keyword: `${clean} preset am`, cursor: 10 },
     { keyword: `${base} ${QUERY_MODIFIERS[variationSeed % QUERY_MODIFIERS.length]}`, cursor: 20 },
   ];
@@ -100,17 +161,17 @@ function buildSearchQueries(rawQuery: string, variationSeed: number): Array<{ ke
 }
 
 function scoreCandidate(vt: RawCandidateVT, recentlyUsedVideos: Set<string>): number {
-  const text = `${vt.description} ${vt.author.signature ?? ""}`.toLowerCase();
+  const text = `${vt.description} ${vt.author.signature ?? ""} ${vt.author.bioLink ?? ""}`.toLowerCase();
   let score = 0;
 
   if (/alight\.link|alightcreative\.com|drive\.google\.com|mediafire\.com|sfile\.mobi|linktr\.ee|lynk\.id|heylink\.me/i.test(text)) {
-    score += 50;
+    score += 55;
   }
   if (/\b(5mb|xml|preset|am|link|bio|komen|komentar|pin)\b/i.test(text)) {
     score += 25;
   }
   if ((vt.comments ?? 0) >= 5) {
-    score += 10;
+    score += 12;
   }
   if (recentlyUsedVideos.has(vt.id)) {
     score -= 40;
@@ -122,6 +183,9 @@ function scoreCandidate(vt: RawCandidateVT, recentlyUsedVideos: Set<string>): nu
 async function searchViaGoService(keyword: string, count: number): Promise<RawCandidateVT[]> {
   const { goServiceUrl, goServiceSecret, goTimeoutMs } = settings.downloader;
   if (!goServiceUrl) return [];
+
+  const isUp = await ensureGoServiceRunning();
+  if (!isUp) return [];
 
   try {
     const res = await fetch(`${goServiceUrl}/search`, {
@@ -181,6 +245,7 @@ async function searchViaGoService(keyword: string, count: number): Promise<RawCa
             nickname: String(v.author?.nickname ?? username),
             avatar: v.author?.avatar || v.author?.avatar_larger || null,
             signature: typeof v.author?.signature === "string" ? v.author.signature : undefined,
+            bioLink: typeof v.author?.bio_link === "string" ? v.author.bio_link : undefined,
           },
         };
       })
@@ -190,79 +255,120 @@ async function searchViaGoService(keyword: string, count: number): Promise<RawCa
   }
 }
 
-async function searchViaTikwm(keyword: string, count: number, cursor: number): Promise<RawCandidateVT[]> {
+async function searchViaWebIndexFallback(keyword: string, count: number): Promise<RawCandidateVT[]> {
   try {
-    const q = new URLSearchParams({
-      keywords: keyword,
-      count: String(count),
-      cursor: String(cursor),
-    });
-
-    const res = await fetch(`https://www.tikwm.com/api/feed/search?${q.toString()}`, {
+    const q = encodeURIComponent(`site:tiktok.com ${keyword}`);
+    const res = await fetch(`https://html.duckduckgo.com/html/?q=${q}`, {
       headers: {
         "User-Agent": DESKTOP_UA,
-        Accept: "application/json",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8",
       },
-      signal: AbortSignal.timeout(14_000),
+      signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return [];
+    const rawHtml = await res.text();
+    let decoded = rawHtml;
+    try {
+      decoded = decodeURIComponent(rawHtml);
+    } catch {
+      decoded = rawHtml;
+    }
 
-    const j: any = await res.json();
-    const videos: any[] = j?.data?.videos ?? [];
-    if (!Array.isArray(videos)) return [];
+    const matches = [
+      ...decoded.matchAll(/(?:https?:\/\/)?(?:www\.)?tiktok\.com\/@([\w.-]+)\/(video|photo)\/(\d{15,22})/gi),
+    ];
 
-    return videos
-      .map((d): RawCandidateVT | null => {
-        const id = String(d.video_id ?? d.aweme_id ?? d.id ?? "").trim();
-        if (!id) return null;
-        const username = String(d.author?.unique_id ?? "").trim();
-        const rawImages = Array.isArray(d.images) ? d.images : [];
-        const images = rawImages.map((u: string) => tikwmUrl(u)).filter((u): u is string => Boolean(u));
-        const kind: "video" | "photo" = images.length > 0 ? "photo" : "video";
-        const playUrl = tikwmUrl(d.play) ?? tikwmUrl(d.wmplay) ?? null;
-        const cover = tikwmUrl(d.cover) ?? tikwmUrl(d.origin_cover) ?? null;
-        const vtUrl = username
-          ? `https://www.tiktok.com/@${username}/${kind === "photo" ? "photo" : "video"}/${id}`
-          : `https://www.tiktok.com/@user/video/${id}`;
+    const unique: Array<{ username: string; kind: "video" | "photo"; id: string; url: string }> = [];
+    const seen = new Set<string>();
+    for (const m of matches) {
+      const username = m[1]!;
+      const kind = (m[2]!.toLowerCase() === "photo" ? "photo" : "video") as "video" | "photo";
+      const id = m[3]!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      unique.push({
+        username,
+        kind,
+        id,
+        url: `https://www.tiktok.com/@${username}/${kind}/${id}`,
+      });
+      if (unique.length >= count) break;
+    }
 
-        return {
-          id,
-          url: vtUrl,
-          kind,
-          description: String(d.title ?? ""),
-          cover,
-          playUrl,
-          images,
-          duration: typeof d.duration === "number" && d.duration > 0 ? d.duration : null,
-          views: typeof d.play_count === "number" ? d.play_count : null,
-          likes: typeof d.digg_count === "number" ? d.digg_count : null,
-          comments: typeof d.comment_count === "number" ? d.comment_count : null,
-          author: {
-            username: username || "creator",
-            nickname: String(d.author?.nickname ?? username),
-            avatar: tikwmUrl(d.author?.avatar) ?? null,
-          },
-        };
-      })
-      .filter((x): x is RawCandidateVT => x !== null);
+    const enriched = await mapLimit(unique, 5, async (item): Promise<RawCandidateVT> => {
+      try {
+        const { body } = await fetchText(item.url, { ua: DESKTOP_UA, timeout: 10_000 });
+        const m = body.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+        if (m) {
+          const scope = JSON.parse(m[1]!)?.__DEFAULT_SCOPE__;
+          const struct =
+            scope?.["webapp.video-detail"]?.itemInfo?.itemStruct ??
+            scope?.["webapp.reflow.video.detail"]?.itemInfo?.itemStruct;
+          if (struct) {
+            const images = Array.isArray(struct.imagePost?.images)
+              ? (struct.imagePost.images as any[])
+                  .map((img) => img?.imageURL?.urlList?.[0] ?? img?.displayImage?.urlList?.[0])
+                  .filter(Boolean)
+              : [];
+            return {
+              id: String(struct.id || item.id),
+              url: item.url,
+              kind: images.length > 0 ? "photo" : item.kind,
+              description: String(struct.desc ?? ""),
+              cover: struct.video?.cover ?? struct.video?.originCover ?? null,
+              playUrl: struct.video?.playAddr ?? struct.video?.downloadAddr ?? null,
+              images,
+              duration: Number(struct.video?.duration) || null,
+              views: Number(struct.stats?.playCount) || null,
+              likes: Number(struct.stats?.diggCount) || null,
+              comments: Number(struct.stats?.commentCount) || null,
+              author: {
+                username: String(struct.author?.uniqueId || item.username),
+                nickname: String(struct.author?.nickname || item.username),
+                avatar: struct.author?.avatarThumb ?? null,
+                signature: struct.author?.signature ?? undefined,
+                bioLink: struct.author?.bioLink?.link ?? undefined,
+              },
+            };
+          }
+        }
+      } catch {
+        // Return basic VT descriptor if SSR timed out
+      }
+      return {
+        id: item.id,
+        url: item.url,
+        kind: item.kind,
+        description: "",
+        cover: null,
+        playUrl: null,
+        images: [],
+        duration: null,
+        views: null,
+        likes: null,
+        comments: null,
+        author: {
+          username: item.username,
+          nickname: item.username,
+          avatar: null,
+        },
+      };
+    });
+
+    return enriched;
   } catch {
     return [];
   }
 }
 
-async function fetchCandidateBatch(keyword: string, cursor: number): Promise<RawCandidateVT[]> {
+async function fetchCandidateBatch(keyword: string): Promise<RawCandidateVT[]> {
   // Primary Engine: Golang TikTokSearchEngine (services/downloader-go)
-  const fromGo = await searchViaGoService(keyword, 24);
+  const fromGo = await searchViaGoService(keyword, 18);
   if (fromGo.length > 0) return fromGo;
 
-  // Secondary Fallback if Golang service container is offline
-  const fromTikwm = await searchViaTikwm(keyword, 28, cursor);
-  const seen = new Set<string>();
-  return fromTikwm.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
+  // Serverless Fallback if Go binary cannot be spawned
+  return searchViaWebIndexFallback(keyword, 18);
 }
 
 const profileCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof getProfile>> }>();
@@ -292,6 +398,9 @@ async function extractPresetsFromCandidate(
   extractLinks(vt.description).forEach((u) => add(u, "description"));
   if (vt.author.signature) {
     extractLinks(vt.author.signature).forEach((u) => add(u, "bio"));
+  }
+  if (vt.author.bioLink) {
+    add(vt.author.bioLink, "bioLink");
   }
 
   const [profile, comments] = await Promise.all([
@@ -338,10 +447,13 @@ async function extractPresetsFromCandidate(
 
   if (presets.length === 0) {
     try {
-      const fb = await runBintang(vt.url);
+      const fb = await Promise.race([
+        runBintang(vt.url),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 9000)),
+      ]);
       if (fb.presets.length > 0) presets = fb.presets;
     } catch {
-      // Ignore fallback error during batch scan
+      // Ignore fallback timeout during batch scan
     }
   }
 
@@ -401,7 +513,7 @@ export async function searchPresetsByKeyword(
   const initialBatches = await Promise.all(
     initialPlans.map(async (plan) => {
       effectiveQueries.push(plan.keyword);
-      return fetchCandidateBatch(plan.keyword, plan.cursor);
+      return fetchCandidateBatch(plan.keyword);
     }),
   );
 
@@ -414,7 +526,7 @@ export async function searchPresetsByKeyword(
   if (candidateMap.size < 14 && searchPlans.length > 2) {
     const extraPlan = searchPlans[2]!;
     effectiveQueries.push(extraPlan.keyword);
-    const extraBatch = await fetchCandidateBatch(extraPlan.keyword, extraPlan.cursor);
+    const extraBatch = await fetchCandidateBatch(extraPlan.keyword);
     for (const vt of extraBatch) {
       if (!candidateMap.has(vt.id)) candidateMap.set(vt.id, vt);
     }
@@ -439,7 +551,7 @@ export async function searchPresetsByKeyword(
       if (extraPlanIdx < searchPlans.length) {
         const nextPlan = searchPlans[extraPlanIdx++]!;
         effectiveQueries.push(nextPlan.keyword);
-        const more = await fetchCandidateBatch(nextPlan.keyword, nextPlan.cursor);
+        const more = await fetchCandidateBatch(nextPlan.keyword);
         const freshCandidates = more.filter((vt) => !candidateMap.has(vt.id));
         for (const vt of freshCandidates) {
           candidateMap.set(vt.id, vt);
@@ -461,7 +573,7 @@ export async function searchPresetsByKeyword(
       scannedVideoIds.add(vt.id);
     }
 
-    const batchResults = await mapLimit(remainingCandidates, 4, (vt) => extractPresetsFromCandidate(vt));
+    const batchResults = await mapLimit(remainingCandidates, 5, (vt) => extractPresetsFromCandidate(vt));
 
     for (const item of batchResults) {
       if (item.presets.length === 0) continue;
