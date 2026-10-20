@@ -185,7 +185,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
           <div className="modal-topbar-left">
             <span className="modal-index-label">
               <span className="kicker-dot" aria-hidden="true" />
-              Pencarian Katalog VT TikTok · Mesin Golang (5MB &amp; XML + Thumbnail VT)
+              <i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Preset Discovery
             </span>
             <h2 id="modal-preset-title" className="modal-heading">
               Cari Preset Lewat Judul
@@ -198,10 +198,9 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
 
         <div className="modal-body">
           <p className="modal-desc">
-            Ketik nama atau gaya preset (contoh: <span className="mono">preset body back</span> atau{" "}
-            <span className="mono">preset elitis</span>). Sistem menelusuri video maupun slideshow foto di TikTok via
-            Golang, mengambil link VT berserta thumbnail &amp; metadatanya, lalu mengekstrak preset{" "}
-            <strong>5MB &amp; XML</strong> dari deskripsi, bio, dan komentar.
+            Ketik tema atau judul preset (contoh: <span className="mono">preset gfx</span>, <span className="mono">preset 3d</span>, atau{" "}
+            <span className="mono">preset elitis</span>). Sistem mencari video dan foto di TikTok, mengambil link VT beserta
+            thumbnail &amp; metadatanya, lalu mengekstrak preset <strong>5MB &amp; XML</strong> dari deskripsi, bio, dan komentar secara santai.
           </p>
 
           <form className="modal-search-form" onSubmit={handleSubmit}>
@@ -210,7 +209,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                 ref={inputRef}
                 type="text"
                 className="input modal-input has-clear"
-                placeholder="Contoh: preset body back, preset elitis, preset jj slowmo..."
+                placeholder="Contoh: preset gfx, preset 3d, preset elitis, preset jj slowmo..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 autoComplete="off"
@@ -249,7 +248,9 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                     Memindai VT ({elapsed}d)...
                   </span>
                 ) : (
-                  "Cari 10+ Preset"
+                  <>
+                    <i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Cari 10+ Preset
+                  </>
                 )}
               </button>
               <button
@@ -259,7 +260,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                 disabled={loading || !query.trim()}
                 title="Cari dari kumpulan video TikTok yang berbeda agar hasil selalu baru"
               >
-                Acak Variasi VT {variation > 0 ? `(#${variation + 1})` : ""}
+                <i className="fa-solid fa-shuffle" aria-hidden="true"></i> Acak Variasi VT {variation > 0 ? `(#${variation + 1})` : ""}
               </button>
             </div>
           </form>
@@ -559,7 +560,13 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                           className={`btn small ${copiedId === `vt-${activeVtPreview.id}` ? "btn-sage" : "ghost"}`}
                           onClick={() => copyText(activeVtPreview.url, "Link VT", `vt-${activeVtPreview.id}`)}
                         >
-                          {copiedId === `vt-${activeVtPreview.id}` ? "✓ Tersalin" : "Salin Link VT"}
+                          {copiedId === `vt-${activeVtPreview.id}` ? (
+                            <>
+                              <i className="fa-solid fa-check" aria-hidden="true"></i> Tersalin
+                            </>
+                          ) : (
+                            "Salin Link VT"
+                          )}
                         </button>
                       </div>
                     </div>
@@ -693,7 +700,13 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                             className={`btn small ${isCopied ? "btn-sage" : "ghost"}`}
                             onClick={() => copyText(item.url, "Link preset", item.id)}
                           >
-                            {isCopied ? "✓ Tersalin" : "Salin"}
+                            {isCopied ? (
+                              <>
+                                <i className="fa-solid fa-check" aria-hidden="true"></i> Tersalin
+                              </>
+                            ) : (
+                              "Salin"
+                            )}
                           </button>
                           <button
                             type="button"
@@ -768,7 +781,13 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                                   className={`btn small ${copiedId === `grp-${group.vt.id}` ? "btn-sage" : "ghost"}`}
                                   onClick={() => copyText(group.vt.url, "Link VT", `grp-${group.vt.id}`)}
                                 >
-                                  {copiedId === `grp-${group.vt.id}` ? "✓ Tersalin" : "Salin Link VT"}
+                                  {copiedId === `grp-${group.vt.id}` ? (
+                                    <>
+                                      <i className="fa-solid fa-check" aria-hidden="true"></i> Tersalin
+                                    </>
+                                  ) : (
+                                    "Salin Link VT"
+                                  )}
                                 </button>
                                 <a
                                   href={group.vt.url}
@@ -791,7 +810,7 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                                 group.vt.likes !== null ? `${fmtNum(group.vt.likes)} suka` : null,
                                 group.vt.comments !== null ? `${fmtNum(group.vt.comments)} komentar` : null,
                                 group.vt.region ? `Wilayah ${group.vt.region}` : null,
-                                group.vt.music?.title ? `🎵 ${group.vt.music.title}` : null,
+                                group.vt.music?.title ? `Musik: ${group.vt.music.title}` : null,
                               ]
                                 .filter(Boolean)
                                 .join(" · ")}
@@ -833,7 +852,13 @@ export function PresetSearchModal({ open, initialQuery = "", onClose, onInspectV
                                     className={`btn small ${copiedId === subKey ? "btn-sage" : "ghost"}`}
                                     onClick={() => copyText(p.url, "Link preset", subKey)}
                                   >
-                                    {copiedId === subKey ? "✓ Tersalin" : "Salin"}
+                                    {copiedId === subKey ? (
+                                      <>
+                                        <i className="fa-solid fa-check" aria-hidden="true"></i> Tersalin
+                                      </>
+                                    ) : (
+                                      "Salin"
+                                    )}
                                   </button>
                                 </div>
                               </li>

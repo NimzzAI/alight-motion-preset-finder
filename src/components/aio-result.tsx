@@ -27,10 +27,16 @@ function MediaRow({ media, name }: { media: AioMedia; name: string }) {
       </div>
       <div className="preset-actions">
         <a className="btn small" href={`${media.proxy}&name=${encodeURIComponent(file)}`}>
-          Unduh
+          <i className="fa-solid fa-download" aria-hidden="true"></i> Unduh
         </a>
-        <button type="button" className="btn small ghost" onClick={copy}>
-          {copied ? "Tersalin" : "Salin link"}
+        <button type="button" className={`btn small ${copied ? "btn-sage" : "ghost"}`} onClick={copy}>
+          {copied ? (
+            <>
+              <i className="fa-solid fa-check" aria-hidden="true"></i> Tersalin
+            </>
+          ) : (
+            "Salin link"
+          )}
         </button>
       </div>
     </li>

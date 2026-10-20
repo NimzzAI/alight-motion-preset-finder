@@ -234,7 +234,13 @@ export function FinderResult({ data }: { data: FindResult }) {
                 className={`btn small ${copiedAll ? "btn-sage" : "ghost"}`}
                 onClick={handleCopyAll}
               >
-                {copiedAll ? "✓ Semua Tersalin" : "Salin Semua Link"}
+                {copiedAll ? (
+                  <>
+                    <i className="fa-solid fa-check" aria-hidden="true"></i> Semua Tersalin
+                  </>
+                ) : (
+                  "Salin Semua Link"
+                )}
               </button>
             </div>
           )}

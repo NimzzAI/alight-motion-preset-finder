@@ -129,7 +129,7 @@ export async function getProfile(user: string) {
   }
 }
 
-export async function getComments(videoId: string, author: string, maxPages = settings.finder.commentPages): Promise<Comment[]> {
+export async function getComments(videoId: string, author: string, maxPages: number = settings.finder.commentPages): Promise<Comment[]> {
   const all: Comment[] = [];
   let cursor = 0;
 
@@ -146,8 +146,12 @@ export async function getComments(videoId: string, author: string, maxPages = se
       region: "ID",
     });
     try {
-      const res = await http(`https://www.tiktok.com/api/comment/list/?${q}`, { accept: "application/json" });
-      const j = JSON.parse(await res.text());
+      const res = await http(`https://www.tiktok.com/api/comment/list/?${q}`, {
+        accept: "application/json",
+        timeout: 1800,
+      });
+      const text = await res.text();
+      const j = text ? JSON.parse(text) : {};
       const list: any[] = j.comments ?? [];
       for (const c of list) {
         const user = c.user?.unique_id ?? "";
@@ -163,9 +167,41 @@ export async function getComments(videoId: string, author: string, maxPages = se
       }
       if (!j.has_more || !list.length) break;
       cursor = j.cursor ?? cursor + 50;
-      await sleep(200);
+      await sleep(100);
     } catch {
       break;
+    }
+  }
+
+  // When deployed to Vercel/serverless where TikTok blocks direct mobile endpoints,
+  // fall back to TikWM public comment API to ensure comments (and pinned preset links) are recovered
+  if (all.length === 0) {
+    try {
+      const targetUrl = author
+        ? `https://www.tiktok.com/@${author}/video/${videoId}`
+        : `https://www.tiktok.com/@user/video/${videoId}`;
+      const res = await fetch(`https://www.tikwm.com/api/comment/list?url=${encodeURIComponent(targetUrl)}&count=50`, {
+        headers: { "User-Agent": DESKTOP_UA, Accept: "application/json" },
+        signal: AbortSignal.timeout(2800),
+      });
+      if (res.ok) {
+        const j = (await res.json()) as any;
+        const list: any[] = j?.data?.comments ?? [];
+        for (const c of list) {
+          const user = c.user?.unique_id ?? "";
+          all.push({
+            text: c.text ?? "",
+            user,
+            pinned: c.author_pin === true || c.pinned === true,
+            digg: c.digg_count ?? 0,
+            cid: c.id ?? "",
+            replyCount: c.reply_total ?? c.reply_count ?? 0,
+            byAuthor: !!author && user === author,
+          });
+        }
+      }
+    } catch {
+      // Ignore fallback errors
     }
   }
 
@@ -193,14 +229,14 @@ export async function getReplies(videoId: string, cid: string): Promise<Reply[]>
     count: "20",
   });
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await sleep(350);
     try {
       const res = await http(`https://api16.tiktokv.com/aweme/v1/comment/list/reply/?${q}`, {
         accept: "application/json",
         ua: REPLY_UA,
+        timeout: 1500,
       });
-      const j = JSON.parse(await res.text());
+      const text = await res.text();
+      const j = text ? JSON.parse(text) : {};
       if (j.comments?.length) {
         return j.comments.map((c: any) => ({
           text: c.text ?? "",
@@ -209,10 +245,9 @@ export async function getReplies(videoId: string, cid: string): Promise<Reply[]>
         }));
       }
     } catch {
-      continue;
+      return [];
     }
-  }
-  return [];
+    return [];
 }
 
 async function getShareInfo(

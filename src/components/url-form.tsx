@@ -121,7 +121,7 @@ export function UrlForm({
               aria-label="Bersihkan teks"
               title="Bersihkan"
             >
-              ×
+              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
             </button>
           )}
           {loading && <span className="input-scan-bar" aria-hidden="true" />}
@@ -130,26 +130,22 @@ export function UrlForm({
           <button type="submit" className={`btn ${isKeywordMode ? "btn-sage" : ""}`} disabled={loading}>
             {loading ? (
               <span className="btn-loading-content">
-                <svg
-                  className="btn-spinner"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                >
-                  <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-                  <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
-                </svg>
+                <i className="fa-solid fa-circle-notch fa-spin btn-spinner" aria-hidden="true"></i>
                 Memproses...
               </span>
             ) : isKeywordMode ? (
-              `Cari 10+ Preset "${trimmed.slice(0, 22)}${trimmed.length > 22 ? "…" : ""}"`
+              <>
+                <i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i>{" "}
+                {`Cari 10+ Preset "${trimmed.slice(0, 22)}${trimmed.length > 22 ? "…" : ""}"`}
+              </>
             ) : (
-              button
+              <>
+                <i className="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> {button}
+              </>
             )}
           </button>
           <button type="button" className="btn ghost" onClick={paste} disabled={loading}>
-            Tempel Clipboard
+            <i className="fa-regular fa-paste" aria-hidden="true"></i> Tempel Clipboard
           </button>
         </div>
         {hint && <p className="hint">{hint}</p>}

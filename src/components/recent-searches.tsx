@@ -97,18 +97,7 @@ export function RecentSearches({ onSelect, activeUrl, loading }: Props) {
                 disabled={loading}
                 title={url}
               >
-                <svg
-                  className="recent-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
+                <i className="fa-regular fa-clock recent-icon" aria-hidden="true"></i>
                 <span className="recent-text">{formatUrl(url)}</span>
               </button>
               <button
@@ -119,7 +108,7 @@ export function RecentSearches({ onSelect, activeUrl, loading }: Props) {
                 aria-label={`Hapus ${url}`}
                 title="Hapus"
               >
-                ×
+                <i className="fa-solid fa-xmark" aria-hidden="true"></i>
               </button>
             </li>
           );

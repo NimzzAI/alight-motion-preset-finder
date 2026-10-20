@@ -18,13 +18,19 @@ function TikTokDownloader() {
 
   return (
     <div className="page">
-      <h1>Unduh video TikTok tanpa watermark.</h1>
-      <p className="lead">Bisa video, musiknya saja, atau foto dari postingan slideshow. Tanpa login.</p>
+      <div className="hero-header stagger-1">
+        <div className="hero-pill-badge">
+          <i className="fa-brands fa-tiktok hero-pill-icon" aria-hidden="true"></i>
+          <span>Pengunduh Media TikTok</span>
+        </div>
+        <h1>Unduh video TikTok tanpa watermark</h1>
+        <p className="lead">Unduh video HD jernih tanpa watermark, audio musik MP3 asli, atau galeri foto slideshow dari postingan TikTok tanpa login.</p>
+      </div>
 
       <UrlForm
         onSubmit={run}
         loading={loading}
-        button="Ambil media"
+        button="Ambil Media"
         validate={isTikTokInput}
         invalid="Itu bukan link TikTok, coba cek lagi."
       />

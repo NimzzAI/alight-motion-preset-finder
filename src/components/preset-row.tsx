@@ -67,7 +67,13 @@ export function PresetRow({ preset, fallbackThumb = null }: Props) {
           Buka
         </a>
         <button type="button" className={`btn small ${copied ? "btn-sage" : "ghost"}`} onClick={copy}>
-          {copied ? "✓ Tersalin" : "Salin"}
+          {copied ? (
+            <>
+              <i className="fa-solid fa-check" aria-hidden="true"></i> Tersalin
+            </>
+          ) : (
+            "Salin"
+          )}
         </button>
       </div>
     </li>

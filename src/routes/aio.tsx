@@ -18,15 +18,21 @@ function Aio() {
 
   return (
     <div className="page">
-      <h1>Unduh video dan audio dari satu link.</h1>
-      <p className="lead">
-        Tempel link dari YouTube atau situs lain yang didukung layanan sumber. Pilih kualitasnya, lalu unduh.
-      </p>
+      <div className="hero-header stagger-1">
+        <div className="hero-pill-badge">
+          <i className="fa-solid fa-photo-film hero-pill-icon" aria-hidden="true"></i>
+          <span>All-in-One Media Downloader</span>
+        </div>
+        <h1>Unduh video &amp; audio serbaguna dari satu link</h1>
+        <p className="lead">
+          Tempel link dari YouTube atau platform lain yang didukung. Pilih resolusi kualitas video atau audio, lalu unduh secara instan tanpa ribet.
+        </p>
+      </div>
 
       <UrlForm
         onSubmit={run}
         loading={loading}
-        button="Ambil link"
+        button="Ambil Link"
         validate={isHttpUrl}
         invalid="Itu bukan link yang valid, coba cek lagi."
         label="Link video"

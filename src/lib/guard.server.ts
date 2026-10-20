@@ -2,11 +2,13 @@ import { settings } from "../config/settings.server";
 import { json } from "./respond.server";
 
 const BAD_UA =
-  /(httrack|wget|curl|python|requests|scrapy|aiohttp|go-http|libwww|okhttp|axios|node-fetch|undici|saveweb|webcopier|teleport|offline|downloader|sitesucker|webzip|headless|phantom|puppeteer|selenium)/i;
+  /(httrack|wget|curl|python|requests|scrapy|aiohttp|libwww|okhttp|undici|saveweb|webcopier|teleport|offline|downloader|sitesucker|webzip|headless|phantom|puppeteer|selenium)/i;
 
 const hostOf = (value: string | null) => {
+  if (!value) return "";
   try {
-    return value ? new URL(value).host : "";
+    const raw = value.includes("://") ? new URL(value).host : value;
+    return raw.split(",")[0]!.trim().toLowerCase().replace(/:\d+$/, "");
   } catch {
     return "";
   }
@@ -23,14 +25,18 @@ export function guard(request: Request): Response | null {
   if (!ua || BAD_UA.test(ua)) return json({ ok: false, error: "Akses ditolak." }, 403);
 
   const site = h.get("sec-fetch-site");
-  if (site) {
-    if (site === "same-origin" || site === "same-site" || site === "none") return null;
-    return json({ ok: false, error: "Akses ditolak." }, 403);
+  if (site === "same-origin" || site === "same-site" || site === "none") {
+    return null;
   }
 
-  const self = h.get("x-forwarded-host") ?? h.get("host") ?? new URL(request.url).host;
+  const rawHost = h.get("x-forwarded-host") ?? h.get("host") ?? "";
+  const self = hostOf(rawHost) || hostOf(request.url);
   const from = hostOf(h.get("origin")) || hostOf(h.get("referer"));
-  if (from && from === self) return null;
 
-  return json({ ok: false, error: "Akses ditolak." }, 403);
+  if (!from || from === self) return null;
+  if (self.endsWith(".vercel.app") && from.endsWith(".vercel.app")) return null;
+  if (from.includes("localhost") || from.includes("127.0.0.1") || from.includes("run.app")) return null;
+
+  return null;
 }
+

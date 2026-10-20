@@ -18,6 +18,7 @@ export const Route = createRootRoute({
       { name: "apple-mobile-web-app-title", content: site.name },
     ],
     links: [
+      { rel: "stylesheet", href: "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" },
       { rel: "stylesheet", href: appCss },
       { rel: "icon", type: "image/png", sizes: "32x32", href: site.images.favicon32 },
       { rel: "icon", type: "image/png", sizes: "64x64", href: site.images.favicon },
@@ -66,7 +67,12 @@ function Layout() {
         <Outlet />
       </main>
       <footer className="wrap footer">
-        <p>Bukan afiliasi Alight Motion atau TikTok. Preset tetap milik pembuatnya.</p>
+        <div className="footer-meta-line">
+          <span className="footer-brand"><i className="fa-solid fa-sliders" aria-hidden="true"></i> Preset Finder</span>
+          <span className="footer-dot">·</span>
+          <span>Ekstraktor Preset Alight Motion (5MB &amp; XML) &amp; Media Downloader</span>
+        </div>
+        <p className="footer-disclaimer">Bukan afiliasi Alight Motion atau TikTok. Hak cipta preset tetap milik pembuat aslinya.</p>
       </footer>
     </>
   );
